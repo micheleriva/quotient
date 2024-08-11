@@ -80,42 +80,84 @@ func TestQuotientFilterDuplicates(t *testing.T) {
 }
 
 //func TestQuotientFilterCapacity(t *testing.T) {
-//	qf := New(4) // 16 slots
+//	const logSize = 8 // 2^8 = 256 slots
+//	qf := New(logSize)
+//	capacity := 1 << logSize
 //
-//	for i := uint64(0); i < 16; i++ {
-//		err := qf.Insert(uint64ToBytes(i))
+//	// Generate random numbers for insertion
+//	rand.Seed(time.Now().UnixNano())
+//	numbers := make(map[uint64]bool)
+//	for len(numbers) < capacity {
+//		numbers[rand.Uint64()] = true
+//	}
+//
+//	insertionFailures := 0
+//	for num := range numbers {
+//		err := qf.Insert(uint64ToBytes(num))
 //		if err != nil {
-//			t.Errorf("Failed to insert item %d: %v", i, err)
+//			insertionFailures++
 //		}
 //	}
 //
 //	count := qf.Count()
-//	t.Logf("Filter reports %d occupied slots", count)
-//
-//	for i := uint64(0); i < 16; i++ {
-//		exists, _ := qf.Exists(uint64ToBytes(i))
-//		if !exists {
-//			t.Errorf("Item %d should exist in the filter, but doesn't", i)
-//		}
-//	}
-//
-//	err := qf.Insert(uint64ToBytes(16))
-//	if err == nil {
-//		t.Errorf("Expected an error when inserting beyond capacity")
-//	} else {
-//		t.Logf("Received expected error when inserting beyond capacity: %v", err)
+//	if int(count) != len(numbers)-insertionFailures {
+//		t.Errorf("Expected %d items, but filter reports %d", len(numbers)-insertionFailures, count)
 //	}
 //
 //	falseNegatives := 0
-//	for i := uint64(0); i <= 16; i++ {
-//		exists, _ := qf.Exists(uint64ToBytes(i))
-//		if !exists && i < 16 {
+//	for num := range numbers {
+//		exists, _ := qf.Exists(uint64ToBytes(num))
+//		if !exists {
 //			falseNegatives++
 //		}
 //	}
-//
+//	falseNegativeRate := float64(falseNegatives) / float64(len(numbers))
+//	t.Logf("False negatives: %d (%.2f%%)", falseNegatives, falseNegativeRate*100)
 //	if falseNegatives > 0 {
-//		t.Errorf("Filter has %d false negatives when operating at capacity", falseNegatives)
+//		t.Errorf("Filter has %d false negatives (%.2f%%)", falseNegatives, falseNegativeRate*100)
+//	}
+//
+//	falsePositives := 0
+//	testsCount := 10000
+//	for i := 0; i < testsCount; i++ {
+//		num := rand.Uint64()
+//		if !numbers[num] {
+//			exists, _ := qf.Exists(uint64ToBytes(num))
+//			if exists {
+//				falsePositives++
+//			}
+//		}
+//	}
+//	falsePositiveRate := float64(falsePositives) / float64(testsCount)
+//	t.Logf("False positive rate: %.4f", falsePositiveRate)
+//
+//	extraInsertions := capacity / 4 // Try inserting 25% more items
+//	extraInsertionFailures := 0
+//	for i := 0; i < extraInsertions; i++ {
+//		num := rand.Uint64()
+//		err := qf.Insert(uint64ToBytes(num))
+//		if err != nil {
+//			extraInsertionFailures++
+//		} else {
+//			numbers[num] = true
+//		}
+//	}
+//
+//	finalCount := qf.Count()
+//	t.Logf("Final count after extra insertions: %d", finalCount)
+//
+//	falseNegatives = 0
+//	for num := range numbers {
+//		exists, _ := qf.Exists(uint64ToBytes(num))
+//		if !exists {
+//			falseNegatives++
+//		}
+//	}
+//	falseNegativeRate = float64(falseNegatives) / float64(len(numbers))
+//	t.Logf("Final false negative rate: %.4f", falseNegativeRate)
+//
+//	if falseNegativeRate > 0.01 { // Allow up to 1% false negative rate
+//		t.Errorf("False negative rate too high: %.4f", falseNegativeRate)
 //	}
 //}
 
