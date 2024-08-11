@@ -2,7 +2,7 @@ GOCMD=go
 GOBUILD=$(GOCMD) build
 GOTEST=$(GOCMD) test
 GOGET=$(GOCMD) get
-BINARY_NAME=quotient_filter
+BINARY_NAME=quotient
 BINARY_UNIX=$(BINARY_NAME)_unix
 
 MAIN_PACKAGE=.
