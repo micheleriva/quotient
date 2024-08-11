@@ -1,6 +1,15 @@
 # Quotient
 
+[![Go](https://github.com/micheleriva/quotient/actions/workflows/go.yml/badge.svg)](https://github.com/micheleriva/quotient/actions/workflows/go.yml)
+
 A massively scalable, fast, distributed quotient filter.
+
+# Status
+
+- [x] Quotient Filter implementation 
+- [ ] Web server
+- [ ] RAFT distribution
+- [ ] Docker image
 
 # Why Golang
 
