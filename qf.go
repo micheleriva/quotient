@@ -28,10 +28,11 @@ func New(logSize uint) *QuotientFilter {
 	}
 }
 
-func (qf *QuotientFilter) Insert(item uint64) {
+func (qf *QuotientFilter) Insert(data []byte) {
 	qf.mu.Lock()
 	defer qf.mu.Unlock()
 
+	item := Murmurhash3(data, 0)
 	quotient := item & qf.mask
 	remainder := item >> qf.quotient
 
@@ -47,12 +48,13 @@ func (qf *QuotientFilter) Insert(item uint64) {
 	qf.insertRemainder(slot, remainder)
 }
 
-func (qf *QuotientFilter) Exists(item uint64) (bool, time.Duration) {
+func (qf *QuotientFilter) Exists(data []byte) (bool, time.Duration) {
 	startTime := time.Now()
 
 	qf.mu.Lock()
 	defer qf.mu.Unlock()
 
+	item := Murmurhash3(data, 0)
 	quotient := item & qf.mask
 	remainder := item >> qf.quotient
 
