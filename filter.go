@@ -42,18 +42,12 @@ func (qf *QuotientFilter) Insert(data []byte) error {
 		return fmt.Errorf("filter is full")
 	}
 
-	slot := qf.findSlot(quotient)
-
-	for s := slot; qf.isOccupied(s) && (s == quotient || qf.isShifted(s)); s = (s + 1) & qf.mask {
-		if qf.getRemainder(s) == remainder {
-			// Item already exists, don't insert
-			return nil
-		}
-		if qf.isRunEnd(s) {
-			break
-		}
+	exists := qf.existsUnsafe(quotient, remainder)
+	if exists {
+		return nil
 	}
 
+	slot := qf.findSlot(quotient)
 	qf.insertIntoSlot(slot, remainder, quotient)
 	qf.count++
 	return nil
@@ -74,9 +68,7 @@ func (qf *QuotientFilter) Exists(data []byte) (bool, time.Duration) {
 	runEnd := qf.findRunEnd(quotient)
 
 	for slot := runStart; ; slot = (slot + 1) & qf.mask {
-		slotRemainder := qf.getRemainder(slot)
-
-		if slotRemainder == remainder {
+		if qf.getRemainder(slot) == remainder {
 			return true, time.Since(startTime)
 		}
 		if slot == runEnd {
@@ -101,14 +93,11 @@ func (qf *QuotientFilter) Remove(data []byte) bool {
 	runEnd := qf.findRunEnd(quotient)
 
 	for slot := runStart; ; slot = (slot + 1) & qf.mask {
-		slotRemainder := qf.getRemainder(slot)
-
-		if slotRemainder == remainder {
+		if qf.getRemainder(slot) == remainder {
 			qf.removeAt(slot, quotient, runStart, runEnd)
 			qf.count--
 			return true
 		}
-
 		if slot == runEnd {
 			break
 		}
@@ -121,6 +110,26 @@ func (qf *QuotientFilter) Count() int {
 	qf.mu.RLock()
 	defer qf.mu.RUnlock()
 	return qf.count
+}
+
+func (qf *QuotientFilter) existsUnsafe(quotient, remainder uint64) bool {
+	if !qf.isOccupied(quotient) {
+		return false
+	}
+
+	runStart := qf.findRunStart(quotient)
+	runEnd := qf.findRunEnd(quotient)
+
+	for slot := runStart; ; slot = (slot + 1) & qf.mask {
+		if qf.getRemainder(slot) == remainder {
+			return true
+		}
+		if slot == runEnd {
+			break
+		}
+	}
+
+	return false
 }
 
 func (qf *QuotientFilter) hash(data []byte) (quotient uint64, remainder uint64) {
