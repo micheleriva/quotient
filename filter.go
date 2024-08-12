@@ -2,7 +2,7 @@ package main
 
 import (
 	"fmt"
-	"github.com/spaolacci/murmur3"
+	"hash/fnv"
 	"sync"
 	"time"
 )
@@ -36,35 +36,26 @@ func (qf *QuotientFilter) Insert(data []byte) error {
 	qf.mu.Lock()
 	defer qf.mu.Unlock()
 
-	item := murmur3.Sum64(data)
-	quotient := item & qf.mask
-	remainder := item >> qf.quotient
+	quotient, remainder := qf.hash(data)
 
 	if qf.count >= len(qf.data) {
 		return fmt.Errorf("filter is full")
 	}
 
-	if !qf.isOccupied(quotient) {
-		qf.setOccupied(quotient)
-		qf.setRemainder(quotient, remainder)
-		qf.setRunStart(quotient)
-		qf.setRunEnd(quotient)
-		qf.count++
-		return nil
-	}
+	slot := qf.findSlot(quotient)
 
-	slot := qf.findRunEnd(quotient)
-	for s := qf.findRunStart(quotient); s != (slot+1)&qf.mask; s = (s + 1) & qf.mask {
+	for s := slot; qf.isOccupied(s) && (s == quotient || qf.isShifted(s)); s = (s + 1) & qf.mask {
 		if qf.getRemainder(s) == remainder {
+			// Item already exists, don't insert
 			return nil
+		}
+		if qf.isRunEnd(s) {
+			break
 		}
 	}
 
-	if slot == quotient && qf.getRemainder(slot) > remainder {
-		slot = (quotient - 1) & qf.mask
-	}
-
-	qf.insertIntoSlot((slot+1)&qf.mask, remainder, quotient)
+	qf.insertIntoSlot(slot, remainder, quotient)
+	qf.count++
 	return nil
 }
 
@@ -73,25 +64,26 @@ func (qf *QuotientFilter) Exists(data []byte) (bool, time.Duration) {
 	qf.mu.RLock()
 	defer qf.mu.RUnlock()
 
-	item := murmur3.Sum64(data)
-	quotient := item & qf.mask
-	remainder := item >> qf.quotient
+	quotient, remainder := qf.hash(data)
 
 	if !qf.isOccupied(quotient) {
 		return false, time.Since(startTime)
 	}
 
-	slot := qf.findRunStart(quotient)
-	endSlot := qf.findRunEnd(quotient)
-	for {
-		if qf.getRemainder(slot) == remainder {
+	runStart := qf.findRunStart(quotient)
+	runEnd := qf.findRunEnd(quotient)
+
+	for slot := runStart; ; slot = (slot + 1) & qf.mask {
+		slotRemainder := qf.getRemainder(slot)
+
+		if slotRemainder == remainder {
 			return true, time.Since(startTime)
 		}
-		if slot == endSlot {
+		if slot == runEnd {
 			break
 		}
-		slot = (slot + 1) & qf.mask
 	}
+
 	return false, time.Since(startTime)
 }
 
@@ -99,9 +91,7 @@ func (qf *QuotientFilter) Remove(data []byte) bool {
 	qf.mu.Lock()
 	defer qf.mu.Unlock()
 
-	item := murmur3.Sum64(data)
-	quotient := item & qf.mask
-	remainder := item >> qf.quotient
+	quotient, remainder := qf.hash(data)
 
 	if !qf.isOccupied(quotient) {
 		return false
@@ -111,8 +101,11 @@ func (qf *QuotientFilter) Remove(data []byte) bool {
 	runEnd := qf.findRunEnd(quotient)
 
 	for slot := runStart; ; slot = (slot + 1) & qf.mask {
-		if qf.getRemainder(slot) == remainder {
+		slotRemainder := qf.getRemainder(slot)
+
+		if slotRemainder == remainder {
 			qf.removeAt(slot, quotient, runStart, runEnd)
+			qf.count--
 			return true
 		}
 
@@ -130,17 +123,29 @@ func (qf *QuotientFilter) Count() int {
 	return qf.count
 }
 
+func (qf *QuotientFilter) hash(data []byte) (quotient uint64, remainder uint64) {
+	h := fnv.New64a()
+	h.Write(data)
+	hashValue := h.Sum64()
+	quotient = hashValue & qf.mask
+	remainder = hashValue >> qf.quotient
+	return
+}
+
 func (qf *QuotientFilter) removeAt(slot, quotient, runStart, runEnd uint64) {
 	isOnlyItemInRun := runStart == runEnd
 	isFirstItemInRun := slot == runStart
 	isLastItemInRun := slot == runEnd
 
-	qf.shiftLeft(slot, runEnd)
-	qf.count--
-
 	if isOnlyItemInRun {
 		qf.clearOccupied(quotient)
+		qf.clearRunStart(slot)
+		qf.clearRunEnd(slot)
+		qf.clearRemainder(slot)
+		qf.clearShifted(slot)
 	} else {
+		qf.shiftLeft(slot, runEnd)
+
 		if isFirstItemInRun {
 			newRunStart := (slot + 1) & qf.mask
 			qf.clearRunStart(slot)
@@ -151,6 +156,7 @@ func (qf *QuotientFilter) removeAt(slot, quotient, runStart, runEnd uint64) {
 		}
 		if isLastItemInRun {
 			newRunEnd := (runEnd - 1) & qf.mask
+			qf.clearRunEnd(runEnd)
 			qf.setRunEnd(newRunEnd)
 		}
 	}
@@ -237,10 +243,13 @@ func (qf *QuotientFilter) setRemainder(index uint64, remainder uint64) {
 
 func (qf *QuotientFilter) findSlot(quotient uint64) uint64 {
 	slot := quotient
-	for qf.isOccupied(slot) && (slot == quotient || qf.isShifted(slot)) {
+	for qf.isOccupied(slot) {
+		if !qf.isShifted(slot) {
+			break
+		}
 		slot = (slot + 1) & qf.mask
 	}
-	return (slot - 1) & qf.mask
+	return slot
 }
 
 func (qf *QuotientFilter) insertRemainder(slot uint64, remainder uint64, quotient uint64) error {
@@ -315,6 +324,11 @@ func (qf *QuotientFilter) clearSlot(index uint64) {
 	qf.data[index&qf.mask] = 0
 }
 
+func (qf *QuotientFilter) clearRemainder(index uint64) {
+	// Clear all but the lowest 4 bits (metadata)
+	qf.data[index&qf.mask] &= 0xF
+}
+
 func (qf *QuotientFilter) clearShifted(index uint64) {
 	qf.data[index&qf.mask] &= ^uint64(shifted)
 }
@@ -325,22 +339,6 @@ func (qf *QuotientFilter) shiftLeft(start, end uint64) {
 
 	for current != end {
 		qf.data[current] = qf.data[next]
-
-		if qf.isShifted(next) {
-			qf.setShifted(current)
-		} else {
-			qf.clearShifted(current)
-		}
-
-		if qf.isRunStart(next) {
-			qf.clearRunStart(next)
-			qf.setRunStart(current)
-		}
-		if qf.isRunEnd(next) {
-			qf.clearRunEnd(next)
-			qf.setRunEnd(current)
-		}
-
 		current = next
 		next = (next + 1) & qf.mask
 	}
@@ -390,7 +388,6 @@ func (qf *QuotientFilter) insertIntoSlot(slot uint64, remainder uint64, quotient
 		if !qf.isOccupied(slot) {
 			qf.setRemainder(slot, currRemainder)
 			qf.data[slot] = (qf.data[slot] & ^uint64(0xF)) | currMetadata | runEnd
-			qf.count++
 			return
 		}
 
@@ -404,7 +401,8 @@ func (qf *QuotientFilter) insertIntoSlot(slot uint64, remainder uint64, quotient
 		currMetadata = prevMetadata | shifted
 
 		if qf.isRunEnd(slot) {
-			qf.data[slot] &= ^uint64(runEnd)
+			qf.clearRunEnd(slot)
+			currMetadata |= runEnd
 		}
 
 		slot = (slot + 1) & qf.mask
