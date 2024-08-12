@@ -18,16 +18,35 @@ Quotient has two simple APIs:
 
 ### Set key
 
+Example request:
 ```sh
 curl -X POST http://localhost:9000/v1/insert \
   -d '{ "key": "b4912a59-b0ed-4f68-9042-0651c28c3e31" }'
   -H 'content-type: application/json'
 ```
 
+Example response:
+```json
+{
+  "key": "b4912a59-b0ed-4f68-9042-0651c28c3e31",
+  "status": "inserted"
+}
+```
+
 ### Check if a key exists
 
+Example request:
 ```sh
 curl http://localhost:9000/v1/exists?key=b4912a59-b0ed-4f68-9042-0651c28c3e31
+```
+
+Example response:
+```json
+{
+  "key": "b4912a59-b0ed-4f68-9042-0651c28c3e31",
+  "exists": true,
+  "elapsed": 4167
+}
 ```
 
 # Why Golang
