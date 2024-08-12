@@ -12,6 +12,10 @@ type V1InsertParams struct {
 	Key string `json:"key"`
 }
 
+type V1RemoveParams struct {
+	Key string `json:"key"`
+}
+
 type V1InsertResponse struct {
 	Key    string `json:"key"`
 	Status string `json:"status"`
@@ -21,6 +25,11 @@ type V1ExistsResponse struct {
 	Key     string        `json:"key"`
 	Exists  bool          `json:"exists"`
 	Elapsed time.Duration `json:"elapsed"`
+}
+
+type V1RemoveResponse struct {
+	Key     string `json:"key"`
+	Removed bool   `json:"removed"`
 }
 
 type V1CountResponse struct {
@@ -40,6 +49,8 @@ func StartServer(config *Config) {
 			v1InsertHandler(ctx)
 		case "/v1/exists":
 			v1ExistsHandler(ctx)
+		case "/v1/remove":
+			v1RemoveHandler(ctx)
 		case "/v1/count":
 			v1CountHandler(ctx)
 		default:
@@ -131,6 +142,45 @@ func v1ExistsHandler(ctx *fasthttp.RequestCtx) {
 	ctx.SetStatusCode(fasthttp.StatusOK)
 	ctx.SetContentType("application/json")
 	ctx.SetBody(responseJSON)
+}
+
+func v1RemoveHandler(ctx *fasthttp.RequestCtx) {
+	if !ctx.IsPost() {
+		ctx.SetStatusCode(fasthttp.StatusMethodNotAllowed)
+		ctx.SetBody([]byte("Method not allowed"))
+		return
+	}
+
+	body := ctx.PostBody()
+	bodyString := []byte(string(body))
+	var jsonBody V1RemoveParams
+
+	err := json.Unmarshal(bodyString, &jsonBody)
+	if err != nil {
+		ctx.SetStatusCode(fasthttp.StatusBadRequest)
+		ctx.SetBody([]byte(err.Error()))
+		return
+	}
+
+	if jsonBody.Key == "" {
+		ctx.SetStatusCode(fasthttp.StatusBadRequest)
+		ctx.SetBody([]byte("Key is required"))
+		return
+	}
+
+	removed := QF.Remove([]byte(jsonBody.Key))
+	response := V1RemoveResponse{Key: jsonBody.Key, Removed: removed}
+	responseJSON, err := json.Marshal(response)
+	if err != nil {
+		ctx.SetStatusCode(fasthttp.StatusInternalServerError)
+		ctx.SetBody([]byte(err.Error()))
+		return
+	}
+
+	ctx.SetStatusCode(fasthttp.StatusOK)
+	ctx.SetContentType("application/json")
+	ctx.SetBody(responseJSON)
+
 }
 
 func v1CountHandler(ctx *fasthttp.RequestCtx) {

@@ -95,6 +95,43 @@ func (qf *QuotientFilter) Exists(data []byte) (bool, time.Duration) {
 	return false, time.Since(startTime)
 }
 
+func (qf *QuotientFilter) Remove(data []byte) bool {
+	qf.mu.Lock()
+	defer qf.mu.Unlock()
+
+	item := murmur3.Sum64(data)
+	quotient := item & qf.mask
+	remainder := item >> qf.quotient
+
+	if !qf.isOccupied(quotient) {
+		return false
+	}
+
+	runStart := qf.findRunStart(quotient)
+	runEnd := qf.findRunEnd(quotient)
+
+	for slot := runStart; ; slot = (slot + 1) & qf.mask {
+		if qf.getRemainder(slot) == remainder {
+			qf.clearSlot(slot)
+			qf.count--
+
+			if runStart == runEnd {
+				qf.data[quotient] &= ^uint64(occupied)
+			} else {
+				qf.shiftLeft(slot, runEnd)
+			}
+
+			return true
+		}
+
+		if slot == runEnd {
+			break
+		}
+	}
+
+	return false
+}
+
 func (qf *QuotientFilter) Count() int {
 	qf.mu.RLock()
 	defer qf.mu.RUnlock()
@@ -217,8 +254,31 @@ func (qf *QuotientFilter) shiftRight(slot uint64) error {
 		currentSlot = prevSlot
 	}
 
-	qf.data[slot] = 0 // Clear the original slot
+	qf.clearSlot(slot) // Clear the original slot
 	return nil
+}
+
+func (qf *QuotientFilter) clearSlot(slot uint64) {
+	qf.data[slot] = 0
+}
+
+func (qf *QuotientFilter) shiftLeft(start, end uint64) {
+	for slot := start; slot != end; slot = (slot + 1) & qf.mask {
+		nextSlot := (slot + 1) & qf.mask
+		qf.data[slot] = qf.data[nextSlot]
+
+		if !qf.isShifted(nextSlot) {
+			break
+		}
+	}
+
+	lastSlot := end
+	qf.clearSlot(lastSlot)
+
+	if !qf.isOccupied(lastSlot) {
+		prevSlot := (lastSlot - 1) & qf.mask
+		qf.setRunEnd(prevSlot)
+	}
 }
 
 func (qf *QuotientFilter) isFull() bool {

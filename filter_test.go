@@ -282,3 +282,140 @@ func BenchmarkQuotientFilterLookup(b *testing.B) {
 		}
 	})
 }
+
+func TestQuotientFilterRemove(t *testing.T) {
+	t.Run("Remove existing item", func(t *testing.T) {
+		qf := NewQuotientFilter(8)
+		item := uint64ToBytes(42)
+
+		err := qf.Insert(item)
+		if err != nil {
+			t.Fatalf("Failed to insert item: %v", err)
+		}
+
+		removed := qf.Remove(item)
+		if !removed {
+			t.Error("Failed to remove existing item")
+		}
+
+		exists, _ := qf.Exists(item)
+		if exists {
+			t.Error("Item still exists after removal")
+		}
+
+		if qf.Count() != 0 {
+			t.Errorf("Expected count 0, got %d", qf.Count())
+		}
+	})
+
+	t.Run("Remove non-existing item", func(t *testing.T) {
+		qf := NewQuotientFilter(8)
+		item := uint64ToBytes(42)
+
+		removed := qf.Remove(item)
+		if removed {
+			t.Error("Reported removal of non-existing item")
+		}
+
+		if qf.Count() != 0 {
+			t.Errorf("Expected count 0, got %d", qf.Count())
+		}
+	})
+
+	t.Run("Remove from multiple items", func(t *testing.T) {
+		qf := NewQuotientFilter(8)
+		items := []uint64{1, 2, 3, 4, 5}
+
+		for _, item := range items {
+			err := qf.Insert(uint64ToBytes(item))
+			if err != nil {
+				t.Fatalf("Failed to insert item %d: %v", item, err)
+			}
+		}
+
+		removedItem := uint64ToBytes(3)
+		removed := qf.Remove(removedItem)
+		if !removed {
+			t.Error("Failed to remove existing item")
+		}
+
+		if qf.Count() != 4 {
+			t.Errorf("Expected count 4, got %d", qf.Count())
+		}
+
+		for _, item := range items {
+			exists, _ := qf.Exists(uint64ToBytes(item))
+			if item == 3 && exists {
+				t.Error("Removed item still exists")
+			} else if item != 3 && !exists {
+				t.Errorf("Item %d should exist but doesn't", item)
+			}
+		}
+	})
+
+	t.Run("Remove and reinsert", func(t *testing.T) {
+		qf := NewQuotientFilter(8)
+		item := uint64ToBytes(42)
+
+		err := qf.Insert(item)
+		if err != nil {
+			t.Fatalf("Failed to insert item: %v", err)
+		}
+
+		removed := qf.Remove(item)
+		if !removed {
+			t.Error("Failed to remove existing item")
+		}
+
+		err = qf.Insert(item)
+		if err != nil {
+			t.Fatalf("Failed to reinsert item: %v", err)
+		}
+
+		exists, _ := qf.Exists(item)
+		if !exists {
+			t.Error("Reinserted item doesn't exist")
+		}
+
+		if qf.Count() != 1 {
+			t.Errorf("Expected count 1, got %d", qf.Count())
+		}
+	})
+
+	t.Run("Remove with collisions", func(t *testing.T) {
+		qf := NewQuotientFilter(4) // Small filter to force collisions
+		items := generateRandomNumbers(10)
+
+		for _, item := range items {
+			err := qf.Insert(item)
+			if err != nil {
+				t.Fatalf("Failed to insert item: %v", err)
+			}
+		}
+
+		initialCount := qf.Count()
+		removedItem := items[5]
+		removed := qf.Remove(removedItem)
+		if !removed {
+			t.Error("Failed to remove existing item")
+		}
+
+		if qf.Count() != initialCount-1 {
+			t.Errorf("Expected count %d, got %d", initialCount-1, qf.Count())
+		}
+
+		exists, _ := qf.Exists(removedItem)
+		if exists {
+			t.Error("Removed item still exists")
+		}
+
+		for i, item := range items {
+			if i != 5 {
+				exists, _ := qf.Exists(item)
+				if !exists {
+					t.Errorf("Item at index %d should exist but doesn't", i)
+				}
+			}
+		}
+	})
+}

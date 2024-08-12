@@ -49,6 +49,23 @@ Example response:
 }
 ```
 
+### Remove a key
+
+Example request:
+```sh
+curl -X POST http://localhost:9000/v1/remove \
+  -d '{ "key": "b4912a59-b0ed-4f68-9042-0651c28c3e31" }'
+  -H 'content-type: application/json'
+```
+
+Example response:
+```json
+{
+  "key": "b4912a59-b0ed-4f68-9042-0651c28c3e31",
+  "status": "removed"
+}
+```
+
 ### Count the number of keys stored
 
 Example request:
