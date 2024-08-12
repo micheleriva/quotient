@@ -1,7 +1,6 @@
 package main
 
 import (
-	"flag"
 	"fmt"
 )
 
@@ -11,9 +10,7 @@ var (
 )
 
 func init() {
-	flag.Parse()
-
-	config, err := ParseConfigFile(*ConfigFilePath)
+	config, err := ParseConfigFile()
 	if err != nil {
 		fmt.Println(err)
 	}

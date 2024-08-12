@@ -109,12 +109,8 @@ func mergeConfigs(defaultConfig, userConfig Config) Config {
 	return mergedConfig
 }
 
-func ParseConfigFile(filename string) (*Config, error) {
-	if filename == "" {
-		filename = DefaultConfigFilename
-	}
-
-	file, err := os.Open(filename)
+func ParseConfigFile() (*Config, error) {
+	file, err := os.Open(DefaultConfigFilename)
 	if err != nil {
 		return nil, fmt.Errorf("could not open config file: %w", err)
 	}
