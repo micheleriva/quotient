@@ -7,9 +7,28 @@ A massively scalable, fast, distributed quotient filter.
 # Status
 
 - [x] Quotient Filter implementation 
-- [ ] Web server
+- [x] Web server
+- [ ] Expiring keys
 - [ ] RAFT distribution
 - [ ] Docker image
+
+# APIs
+
+Quotient has two simple APIs:
+
+### Set key
+
+```sh
+curl -X POST http://localhost:9000/v1/insert \
+  -d '{ "key": "b4912a59-b0ed-4f68-9042-0651c28c3e31" }'
+  -H 'content-type: application/json'
+```
+
+### Check if a key exists
+
+```sh
+curl http://localhost:9000/v1/exists?key=b4912a59-b0ed-4f68-9042-0651c28c3e31
+```
 
 # Why Golang
 
