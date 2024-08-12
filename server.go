@@ -5,10 +5,22 @@ import (
 	"fmt"
 	"github.com/valyala/fasthttp"
 	"log"
+	"time"
 )
 
 type V1InsertParams struct {
 	Key string `json:"key"`
+}
+
+type V1InsertResponse struct {
+	Key    string `json:"key"`
+	Status string `json:"status"`
+}
+
+type V1ExistsResponse struct {
+	Key     string        `json:"key"`
+	Exists  bool          `json:"exists"`
+	Elapsed time.Duration `json:"elapsed"`
 }
 
 func StartServer(config *Config) {
@@ -74,10 +86,17 @@ func v1InsertHandler(ctx *fasthttp.RequestCtx) {
 		ctx.SetBody([]byte(insertError.Error()))
 	}
 
-	response := fmt.Sprintf(`{"key":"%s", "status": "inserted"}`, jsonBody.Key)
+	response := V1InsertResponse{Key: jsonBody.Key, Status: "inserted"}
+	responseJSON, err := json.Marshal(response)
+	if err != nil {
+		ctx.SetStatusCode(fasthttp.StatusInternalServerError)
+		ctx.SetBody([]byte(err.Error()))
+		return
+	}
 
 	ctx.SetStatusCode(fasthttp.StatusOK)
-	ctx.SetBody([]byte(response))
+	ctx.SetContentType("application/json")
+	ctx.SetBody(responseJSON)
 }
 
 func v1ExistsHandler(ctx *fasthttp.RequestCtx) {
@@ -95,8 +114,15 @@ func v1ExistsHandler(ctx *fasthttp.RequestCtx) {
 	}
 
 	exists, elapsed := QF.Exists([]byte(key))
-	response := fmt.Sprintf(`{"key":"%s", "exists": %t, "elapsed": %d}`, key, exists, elapsed)
+	response := V1ExistsResponse{Key: key, Exists: exists, Elapsed: elapsed}
+	responseJSON, err := json.Marshal(response)
+	if err != nil {
+		ctx.SetStatusCode(fasthttp.StatusInternalServerError)
+		ctx.SetBody([]byte(err.Error()))
+		return
+	}
 
 	ctx.SetStatusCode(fasthttp.StatusOK)
-	ctx.SetBody([]byte(response))
+	ctx.SetContentType("application/json")
+	ctx.SetBody(responseJSON)
 }
