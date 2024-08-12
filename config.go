@@ -10,6 +10,10 @@ import (
 )
 
 type Config struct {
+	Quotient struct {
+		LogSize uint `yaml:"logSize"`
+	}
+
 	Server struct {
 		Port        int    `yaml:"port"`
 		Concurrency int    `yaml:"concurrency"`
@@ -26,15 +30,22 @@ type Config struct {
 }
 
 const (
-	DefaultConfigFilename = "quotient.config.yml"
+	DefaultConfigFilename = "quotient.config.yaml"
 	defaultServerPort     = 8080
 	defaultAPIKey         = "xyz"
 	defaultSnapshotDir    = "/quotient/raft/snapshots"
 	defaultLogDir         = "/quotient/raft/logs"
+	defaultLogSize        = 22
 )
 
 func createDefaultConfig() *Config {
 	return &Config{
+		Quotient: struct {
+			LogSize uint `yaml:"logSize"`
+		}{
+			LogSize: defaultLogSize,
+		},
+
 		Server: struct {
 			Port        int    `yaml:"port"`
 			Concurrency int    `yaml:"concurrency"`
@@ -44,6 +55,7 @@ func createDefaultConfig() *Config {
 			Concurrency: runtime.NumCPU(),
 			APIKey:      defaultAPIKey,
 		},
+
 		Raft: struct {
 			NodeID      string        `yaml:"node_id"`
 			TCPAddress  string        `yaml:"tcp_address"`
@@ -63,6 +75,9 @@ func createDefaultConfig() *Config {
 func mergeConfigs(defaultConfig, userConfig Config) Config {
 	mergedConfig := defaultConfig
 
+	if userConfig.Quotient.LogSize > 0 {
+		mergedConfig.Quotient.LogSize = userConfig.Quotient.LogSize
+	}
 	if userConfig.Server.Port != 0 {
 		mergedConfig.Server.Port = userConfig.Server.Port
 	}

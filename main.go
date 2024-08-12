@@ -5,7 +5,12 @@ import (
 	"fmt"
 )
 
-func main() {
+var (
+	Configuration *Config
+	QF            *QuotientFilter
+)
+
+func init() {
 	flag.Parse()
 
 	config, err := ParseConfigFile(*ConfigFilePath)
@@ -13,5 +18,10 @@ func main() {
 		fmt.Println(err)
 	}
 
-	fmt.Println(config)
+	Configuration = config
+	QF = NewQuotientFilter(config.Quotient.LogSize)
+}
+
+func main() {
+	StartServer(Configuration)
 }
