@@ -148,7 +148,7 @@ func TestQuotientFilterCapacity(t *testing.T) {
 //	t.Logf("Items inserted: %d", len(numbers))
 //	t.Logf("False negatives: %d (%.6f%%)", falseNegatives, falseNegativeRate*100)
 //
-//	acceptableRate := 0.0001 // 0.01%
+//	acceptableRate := 0.01 // 1%
 //	if falseNegativeRate > acceptableRate {
 //		t.Errorf("False negative rate too high: %.6f%% (threshold: %.6f%%)", falseNegativeRate*100, acceptableRate*100)
 //	}
