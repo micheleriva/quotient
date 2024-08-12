@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"math/rand"
 	"testing"
+	"time"
 )
 
 const (
@@ -48,38 +49,73 @@ func TestQuotientFilterBasic(t *testing.T) {
 }
 
 func TestQuotientFilterDuplicates(t *testing.T) {
-	qf := New(10)
+	qf := New(8)
+	testData := []byte("test")
 
-	testItem := uint64ToBytes(12345)
-	t.Logf("Inserting first item")
-	err := qf.Insert(testItem)
+	t.Log("Inserting first item")
+	err := qf.Insert(testData)
 	if err != nil {
-		t.Fatalf("Failed to insert first item: %v", err)
+		t.Fatalf("Failed to insert item: %v", err)
 	}
-	t.Logf("First item inserted")
 
-	t.Logf("Inserting second item")
-	err = qf.Insert(testItem)
+	err = qf.Insert(testData)
 	if err != nil {
 		t.Fatalf("Failed to insert duplicate item: %v", err)
 	}
-	t.Logf("Second item insertion attempt completed")
 
-	t.Logf("Checking if item exists")
-	exists, duration := qf.Exists(testItem)
+	t.Log("Checking if item exists")
+	exists, duration := qf.Exists(testData)
 	t.Logf("Exists check took %v", duration)
+
 	if !exists {
-		t.Errorf("Item should exist in the filter after insertion")
+		t.Error("Item should exist in the filter")
 	}
 
 	count := qf.Count()
-	t.Logf("Filter reports %d items", count)
 	if count != 1 {
 		t.Errorf("Expected 1 item in the filter, but found %d", count)
 	}
+
+	// Test inserting a different item
+	differentData := []byte("different")
+	err = qf.Insert(differentData)
+	if err != nil {
+		t.Fatalf("Failed to insert different item: %v", err)
+	}
+
+	count = qf.Count()
+	if count != 2 {
+		t.Errorf("Expected 2 items in the filter after inserting a different item, but found %d", count)
+	}
 }
 
-//func TestQuotientFilterCapacity(t *testing.T) {
+func TestQuotientFilterCapacity(t *testing.T) {
+	const logSize = 8 // 2^8 = 256 slots
+	qf := New(logSize)
+	capacity := 1 << logSize
+
+	// Generate random numbers for insertion
+	rand.Seed(time.Now().UnixNano())
+	numbers := make(map[uint64]bool)
+	for len(numbers) < capacity {
+		numbers[rand.Uint64()] = true
+	}
+
+	insertionFailures := 0
+	for num := range numbers {
+		err := qf.Insert(uint64ToBytes(num))
+		if err != nil {
+			insertionFailures++
+		}
+	}
+
+	count := qf.Count()
+	if int(count) != len(numbers)-insertionFailures {
+		t.Errorf("Expected %d items, but filter reports %d", len(numbers)-insertionFailures, count)
+	}
+}
+
+//func TestQuotientFilterFalseNegatives(t *testing.T) {
 //	const logSize = 8 // 2^8 = 256 slots
 //	qf := New(logSize)
 //	capacity := 1 << logSize
@@ -91,17 +127,8 @@ func TestQuotientFilterDuplicates(t *testing.T) {
 //		numbers[rand.Uint64()] = true
 //	}
 //
-//	insertionFailures := 0
 //	for num := range numbers {
-//		err := qf.Insert(uint64ToBytes(num))
-//		if err != nil {
-//			insertionFailures++
-//		}
-//	}
-//
-//	count := qf.Count()
-//	if int(count) != len(numbers)-insertionFailures {
-//		t.Errorf("Expected %d items, but filter reports %d", len(numbers)-insertionFailures, count)
+//		_ = qf.Insert(uint64ToBytes(num))
 //	}
 //
 //	falseNegatives := 0
@@ -115,6 +142,23 @@ func TestQuotientFilterDuplicates(t *testing.T) {
 //	t.Logf("False negatives: %d (%.2f%%)", falseNegatives, falseNegativeRate*100)
 //	if falseNegatives > 0 {
 //		t.Errorf("Filter has %d false negatives (%.2f%%)", falseNegatives, falseNegativeRate*100)
+//	}
+//}
+
+//func TestQuotientFilterFalsePositives(t *testing.T) {
+//	const logSize = 8 // 2^8 = 256 slots
+//	qf := New(logSize)
+//	capacity := 1 << logSize
+//
+//	// Generate random numbers for insertion
+//	rand.Seed(time.Now().UnixNano())
+//	numbers := make(map[uint64]bool)
+//	for len(numbers) < capacity {
+//		numbers[rand.Uint64()] = true
+//	}
+//
+//	for num := range numbers {
+//		_ = qf.Insert(uint64ToBytes(num))
 //	}
 //
 //	falsePositives := 0
@@ -130,6 +174,27 @@ func TestQuotientFilterDuplicates(t *testing.T) {
 //	}
 //	falsePositiveRate := float64(falsePositives) / float64(testsCount)
 //	t.Logf("False positive rate: %.4f", falsePositiveRate)
+//	// Optionally assert that the false positive rate is within expected bounds
+//	if falsePositiveRate > 0.01 { // Example threshold, adjust as needed
+//		t.Errorf("False positive rate too high: %.4f", falsePositiveRate)
+//	}
+//}
+
+//func TestQuotientFilterOverflow(t *testing.T) {
+//	const logSize = 8 // 2^8 = 256 slots
+//	qf := New(logSize)
+//	capacity := 1 << logSize
+//
+//	// Generate random numbers for insertion
+//	rand.Seed(time.Now().UnixNano())
+//	numbers := make(map[uint64]bool)
+//	for len(numbers) < capacity {
+//		numbers[rand.Uint64()] = true
+//	}
+//
+//	for num := range numbers {
+//		_ = qf.Insert(uint64ToBytes(num))
+//	}
 //
 //	extraInsertions := capacity / 4 // Try inserting 25% more items
 //	extraInsertionFailures := 0
@@ -146,14 +211,14 @@ func TestQuotientFilterDuplicates(t *testing.T) {
 //	finalCount := qf.Count()
 //	t.Logf("Final count after extra insertions: %d", finalCount)
 //
-//	falseNegatives = 0
+//	falseNegatives := 0
 //	for num := range numbers {
 //		exists, _ := qf.Exists(uint64ToBytes(num))
 //		if !exists {
 //			falseNegatives++
 //		}
 //	}
-//	falseNegativeRate = float64(falseNegatives) / float64(len(numbers))
+//	falseNegativeRate := float64(falseNegatives) / float64(len(numbers))
 //	t.Logf("Final false negative rate: %.4f", falseNegativeRate)
 //
 //	if falseNegativeRate > 0.01 { // Allow up to 1% false negative rate

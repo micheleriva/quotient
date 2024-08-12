@@ -19,6 +19,7 @@ type QuotientFilter struct {
 	mask     uint64
 	quotient uint
 	mu       sync.Mutex
+	count    int
 }
 
 func New(logSize uint) *QuotientFilter {
@@ -27,6 +28,7 @@ func New(logSize uint) *QuotientFilter {
 		data:     make([]uint64, size),
 		mask:     size - 1,
 		quotient: logSize,
+		count:    0,
 	}
 }
 
@@ -43,6 +45,7 @@ func (qf *QuotientFilter) Insert(data []byte) error {
 		qf.setRunStart(quotient)
 		qf.setRunEnd(quotient)
 		qf.setRemainder(quotient, remainder)
+		qf.count++
 		return nil
 	}
 
@@ -79,13 +82,9 @@ func (qf *QuotientFilter) Exists(data []byte) (bool, time.Duration) {
 }
 
 func (qf *QuotientFilter) Count() int {
-	count := 0
-	for i := uint64(0); i < uint64(len(qf.data)); i++ {
-		if qf.isOccupied(i) {
-			count++
-		}
-	}
-	return count
+	qf.mu.Lock()
+	defer qf.mu.Unlock()
+	return qf.count
 }
 
 func (qf *QuotientFilter) isOccupied(index uint64) bool {
@@ -137,27 +136,49 @@ func (qf *QuotientFilter) findSlot(quotient uint64) uint64 {
 }
 
 func (qf *QuotientFilter) insertRemainder(slot uint64, remainder uint64, quotient uint64) error {
-	err := qf.shiftRight(slot)
-	if err != nil {
-		return err
+	if qf.isFull() {
+		return fmt.Errorf("filter is full")
 	}
 
-	qf.setOccupied(quotient)
-	if slot != quotient {
-		qf.setShifted(slot)
+	currentSlot := slot
+	for {
+		if !qf.isOccupied(currentSlot) {
+			break
+		}
+		if qf.getRemainder(currentSlot) == remainder {
+			return nil // Item already exists, don't insert or increment count
+		}
+		if qf.isRunEnd(currentSlot) {
+			break
+		}
+		currentSlot = (currentSlot + 1) & qf.mask
 	}
-	if slot == quotient || !qf.isRunStart(slot) {
-		qf.setRunStart(slot)
-	}
-	qf.setRemainder(slot, remainder)
 
-	nextSlot := (slot + 1) & qf.mask
+	if currentSlot != slot {
+		err := qf.shiftRight(currentSlot)
+		if err != nil {
+			return err
+		}
+	}
+
+	qf.setOccupied(currentSlot)
+	qf.setRemainder(currentSlot, remainder)
+
+	if currentSlot != quotient {
+		qf.setShifted(currentSlot)
+	}
+	if currentSlot == quotient || !qf.isRunStart(currentSlot) {
+		qf.setRunStart(currentSlot)
+	}
+
+	nextSlot := (currentSlot + 1) & qf.mask
 	if !qf.isOccupied(nextSlot) || qf.isRunStart(nextSlot) {
-		qf.setRunEnd(slot)
+		qf.setRunEnd(currentSlot)
 	} else {
-		qf.clearRunEnd((slot - 1) & qf.mask)
+		qf.clearRunEnd((currentSlot - 1) & qf.mask)
 	}
 
+	qf.count++
 	return nil
 }
 
@@ -166,37 +187,26 @@ func (qf *QuotientFilter) clearRunEnd(index uint64) {
 }
 
 func (qf *QuotientFilter) shiftRight(slot uint64) error {
-	if qf.isFull() {
-		return fmt.Errorf("filter is full")
-	}
-
-	currSlot := slot
-	for i := uint64(0); i < uint64(len(qf.data)); i++ {
-		nextSlot := (currSlot + 1) & qf.mask
+	currentSlot := slot
+	for {
+		nextSlot := (currentSlot + 1) & qf.mask
 		if !qf.isOccupied(nextSlot) {
 			break
 		}
-		currSlot = nextSlot
+		currentSlot = nextSlot
 	}
 
-	for currSlot != slot {
-		prevSlot := (currSlot - 1) & qf.mask
-		qf.data[currSlot] = qf.data[prevSlot]
-		qf.setShifted(currSlot)
-		currSlot = prevSlot
+	for currentSlot != slot {
+		prevSlot := (currentSlot - 1) & qf.mask
+		qf.data[currentSlot] = qf.data[prevSlot]
+		qf.setShifted(currentSlot)
+		currentSlot = prevSlot
 	}
 
-	// Clear the slot where we're inserting
-	qf.data[slot] = 0
-
+	qf.data[slot] = 0 // Clear the original slot
 	return nil
 }
 
 func (qf *QuotientFilter) isFull() bool {
-	for i := uint64(0); i < uint64(len(qf.data)); i++ {
-		if !qf.isOccupied(i) {
-			return false
-		}
-	}
-	return true
+	return qf.count >= len(qf.data)
 }
