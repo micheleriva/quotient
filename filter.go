@@ -22,7 +22,7 @@ type QuotientFilter struct {
 	count    int
 }
 
-func New(logSize uint) *QuotientFilter {
+func NewQuotientFilter(logSize uint) *QuotientFilter {
 	size := uint64(1) << logSize
 	return &QuotientFilter{
 		data:     make([]uint64, size),
