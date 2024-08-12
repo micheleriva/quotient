@@ -23,6 +23,10 @@ type V1ExistsResponse struct {
 	Elapsed time.Duration `json:"elapsed"`
 }
 
+type V1CountResponse struct {
+	Count int `json:"count"`
+}
+
 func StartServer(config *Config) {
 	port := fmt.Sprintf(":%d", config.Server.Port)
 	host := config.Server.Host
@@ -36,6 +40,8 @@ func StartServer(config *Config) {
 			v1InsertHandler(ctx)
 		case "/v1/exists":
 			v1ExistsHandler(ctx)
+		case "/v1/count":
+			v1CountHandler(ctx)
 		default:
 			notFoundHandler(ctx)
 		}
@@ -115,6 +121,27 @@ func v1ExistsHandler(ctx *fasthttp.RequestCtx) {
 
 	exists, elapsed := QF.Exists([]byte(key))
 	response := V1ExistsResponse{Key: key, Exists: exists, Elapsed: elapsed}
+	responseJSON, err := json.Marshal(response)
+	if err != nil {
+		ctx.SetStatusCode(fasthttp.StatusInternalServerError)
+		ctx.SetBody([]byte(err.Error()))
+		return
+	}
+
+	ctx.SetStatusCode(fasthttp.StatusOK)
+	ctx.SetContentType("application/json")
+	ctx.SetBody(responseJSON)
+}
+
+func v1CountHandler(ctx *fasthttp.RequestCtx) {
+	if !ctx.IsGet() {
+		ctx.SetStatusCode(fasthttp.StatusMethodNotAllowed)
+		ctx.SetBody([]byte("Method not allowed"))
+		return
+	}
+
+	count := QF.Count()
+	response := V1CountResponse{Count: count}
 	responseJSON, err := json.Marshal(response)
 	if err != nil {
 		ctx.SetStatusCode(fasthttp.StatusInternalServerError)

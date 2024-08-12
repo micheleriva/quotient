@@ -49,6 +49,20 @@ Example response:
 }
 ```
 
+### Count the number of keys stored
+
+Example request:
+```sh
+curl http://localhost:9000/v1/count
+```
+
+Example response:
+```json
+{
+  "count": 1
+}
+```
+
 # Why Golang
 
 Even though I'm not a Googler (nor a researcher), I'm fairly young and I learned Python and JavaScript.
