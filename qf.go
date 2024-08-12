@@ -56,7 +56,7 @@ func (qf *QuotientFilter) Insert(data []byte) error {
 	slot := qf.findRunEnd(quotient)
 	for s := qf.findRunStart(quotient); s != (slot+1)&qf.mask; s = (s + 1) & qf.mask {
 		if qf.getRemainder(s) == remainder {
-			return nil // Item already exists, don't insert
+			return nil
 		}
 	}
 
@@ -227,17 +227,17 @@ func (qf *QuotientFilter) isFull() bool {
 
 func (qf *QuotientFilter) findRunStart(quotient uint64) uint64 {
 	slot := quotient
-	for qf.isShifted(slot) {
+	for qf.isShifted(slot) && !qf.isRunStart(slot) {
 		slot = (slot - 1) & qf.mask
 	}
 	return slot
 }
 
 func (qf *QuotientFilter) findRunEnd(quotient uint64) uint64 {
-	slot := quotient
+	slot := qf.findRunStart(quotient)
 	for !qf.isRunEnd(slot) {
 		nextSlot := (slot + 1) & qf.mask
-		if nextSlot == quotient || !qf.isShifted(nextSlot) {
+		if !qf.isShifted(nextSlot) {
 			break
 		}
 		slot = nextSlot
