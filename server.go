@@ -25,8 +25,8 @@ type V1ExistsResponse struct {
 
 func StartServer(config *Config) {
 	port := fmt.Sprintf(":%d", config.Server.Port)
-	host := config.Raft.TCPAddress
-	log.Println(fmt.Sprintf("Starting server on at: %s", host))
+	host := config.Server.Host
+	log.Println(fmt.Sprintf("Starting server on at: http://%s%s", host, port))
 
 	requestHandler := func(ctx *fasthttp.RequestCtx) {
 		switch string(ctx.Path()) {

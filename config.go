@@ -15,6 +15,7 @@ type Config struct {
 	}
 
 	Server struct {
+		Host        string `yaml:"host"`
 		Port        int    `yaml:"port"`
 		Concurrency int    `yaml:"concurrency"`
 		APIKey      string `yaml:"api_key"`
@@ -47,10 +48,12 @@ func createDefaultConfig() *Config {
 		},
 
 		Server: struct {
+			Host        string `yaml:"host"`
 			Port        int    `yaml:"port"`
 			Concurrency int    `yaml:"concurrency"`
 			APIKey      string `yaml:"api_key"`
 		}{
+			Host:        "localhost",
 			Port:        defaultServerPort,
 			Concurrency: runtime.NumCPU(),
 			APIKey:      defaultAPIKey,
