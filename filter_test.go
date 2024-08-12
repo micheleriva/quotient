@@ -2,7 +2,7 @@ package main
 
 import (
 	"encoding/binary"
-	"fmt"
+	"github.com/google/uuid"
 	"math/rand"
 	"testing"
 	"time"
@@ -19,12 +19,45 @@ func uint64ToBytes(n uint64) []byte {
 	return b
 }
 
-func generateRandomNumbers(n int) [][]byte {
-	numbers := make([][]byte, n)
-	for i := range numbers {
-		numbers[i] = uint64ToBytes(rand.Uint64())
+func generateRandomUUIDs(n int) [][]byte {
+	uuids := make([][]byte, n)
+	for i := range uuids {
+		uuidBytes, _ := uuid.New().MarshalBinary()
+		uuids[i] = uuidBytes
 	}
-	return numbers
+	return uuids
+}
+
+func BenchmarkQuotientFilterLookup(b *testing.B) {
+	qf := NewQuotientFilter(22) // 2^22, 4,194,304 slots
+
+	b.Log("Generating random UUIDs...")
+	uuids := generateRandomUUIDs(numItems)
+
+	b.Log("Inserting UUIDs into the filter...")
+	for _, id := range uuids {
+		qf.Insert(id)
+	}
+
+	b.Log("Generating lookup UUIDs...")
+	lookupUUIDs := make([][]byte, benchLookup)
+	for i := range lookupUUIDs {
+		if i < benchLookup/2 {
+			lookupUUIDs[i] = uuids[rand.Intn(len(uuids))]
+		} else {
+			newUUID, _ := uuid.New().MarshalBinary()
+			lookupUUIDs[i] = newUUID
+		}
+	}
+
+	b.ResetTimer()
+	b.Log("Starting benchmark...")
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			id := lookupUUIDs[rand.Intn(len(lookupUUIDs))]
+			qf.Exists(id)
+		}
+	})
 }
 
 func TestQuotientFilterBasic(t *testing.T) {
@@ -270,7 +303,6 @@ func TestQuotientFilterRemove(t *testing.T) {
 			"item9", "item10",
 		}
 
-		fmt.Println("Inserting items:")
 		for _, item := range items {
 			err := qf.Insert([]byte(item))
 			if err != nil {
@@ -278,7 +310,6 @@ func TestQuotientFilterRemove(t *testing.T) {
 			}
 		}
 
-		fmt.Println("Checking existence of items:")
 		for i, item := range items {
 			exists, _ := qf.Exists([]byte(item))
 			if !exists {
@@ -286,7 +317,6 @@ func TestQuotientFilterRemove(t *testing.T) {
 			}
 		}
 
-		fmt.Println("\nRemoving even-indexed items:")
 		for i := 0; i < len(items); i += 2 {
 			removed := qf.Remove([]byte(items[i]))
 			if !removed {
@@ -294,7 +324,6 @@ func TestQuotientFilterRemove(t *testing.T) {
 			}
 		}
 
-		fmt.Println("Checking final existence of items:")
 		for i, item := range items {
 			exists, _ := qf.Exists([]byte(item))
 			if i%2 == 0 {
