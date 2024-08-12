@@ -77,7 +77,6 @@ func TestQuotientFilterDuplicates(t *testing.T) {
 		t.Errorf("Expected 1 item in the filter, but found %d", count)
 	}
 
-	// Test inserting a different item
 	differentData := []byte("different")
 	err = qf.Insert(differentData)
 	if err != nil {
@@ -89,7 +88,6 @@ func TestQuotientFilterDuplicates(t *testing.T) {
 		t.Errorf("Expected 2 items in the filter after inserting a different item, but found %d", count)
 	}
 
-	// Check both items exist
 	exists, _ = qf.Exists(testData)
 	if !exists {
 		t.Error("Original item should still exist in the filter")
@@ -170,7 +168,6 @@ func TestQuotientFilterFalsePositives(t *testing.T) {
 	qf := NewQuotientFilter(logSize)
 	capacity := 1 << logSize
 
-	// Generate random numbers for insertion
 	rand.Seed(time.Now().UnixNano())
 	numbers := make(map[uint64]bool)
 	for len(numbers) < capacity {
@@ -194,8 +191,8 @@ func TestQuotientFilterFalsePositives(t *testing.T) {
 	}
 	falsePositiveRate := float64(falsePositives) / float64(testsCount)
 	t.Logf("False positive rate: %.4f", falsePositiveRate)
-	// Optionally assert that the false positive rate is within expected bounds
-	if falsePositiveRate > 0.01 { // Example threshold, adjust as needed
+
+	if falsePositiveRate > 0.01 {
 		t.Errorf("False positive rate too high: %.4f", falsePositiveRate)
 	}
 }
