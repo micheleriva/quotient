@@ -28,7 +28,7 @@ func generateRandomNumbers(n int) [][]byte {
 }
 
 func TestQuotientFilterBasic(t *testing.T) {
-	qf := New(10)
+	qf := NewQuotientFilter(10)
 
 	testItems := []uint64{1, 100, 1000, 10000, 100000}
 	for _, item := range testItems {
@@ -49,7 +49,7 @@ func TestQuotientFilterBasic(t *testing.T) {
 }
 
 func TestQuotientFilterDuplicates(t *testing.T) {
-	qf := New(8)
+	qf := NewQuotientFilter(8)
 	testData := []byte("test")
 
 	t.Log("Inserting first item")
@@ -91,7 +91,7 @@ func TestQuotientFilterDuplicates(t *testing.T) {
 
 func TestQuotientFilterCapacity(t *testing.T) {
 	const logSize = 8 // 2^8 = 256 slots
-	qf := New(logSize)
+	qf := NewQuotientFilter(logSize)
 	capacity := 1 << logSize
 
 	// Generate random numbers for insertion
@@ -117,7 +117,7 @@ func TestQuotientFilterCapacity(t *testing.T) {
 
 func TestQuotientFilterFalseNegatives(t *testing.T) {
 	const logSize = 22 // 2^22 = 4,194,304 slots
-	qf := New(logSize)
+	qf := NewQuotientFilter(logSize)
 	capacity := 1 << logSize
 
 	// Calculate the number of items to insert (50% of capacity)
@@ -156,7 +156,7 @@ func TestQuotientFilterFalseNegatives(t *testing.T) {
 
 func TestQuotientFilterFalsePositives(t *testing.T) {
 	const logSize = 8 // 2^8 = 256 slots
-	qf := New(logSize)
+	qf := NewQuotientFilter(logSize)
 	capacity := 1 << logSize
 
 	// Generate random numbers for insertion
@@ -191,7 +191,7 @@ func TestQuotientFilterFalsePositives(t *testing.T) {
 
 func TestQuotientFilterOverflow(t *testing.T) {
 	const logSize = 14 // 2^14 = 16,384 slots
-	qf := New(logSize)
+	qf := NewQuotientFilter(logSize)
 	capacity := 1 << logSize
 
 	// Generate random numbers for insertion
@@ -236,7 +236,7 @@ func TestQuotientFilterOverflow(t *testing.T) {
 }
 
 func TestQuotientFilterEdgeCases(t *testing.T) {
-	qf := New(10)
+	qf := NewQuotientFilter(10)
 
 	qf.Insert(uint64ToBytes(0))
 	exists, _ := qf.Exists(uint64ToBytes(0))
@@ -253,7 +253,7 @@ func TestQuotientFilterEdgeCases(t *testing.T) {
 }
 
 func BenchmarkQuotientFilterLookup(b *testing.B) {
-	qf := New(logSize)
+	qf := NewQuotientFilter(logSize)
 
 	b.Log("Generating random numbers...")
 	numbers := generateRandomNumbers(numItems)
