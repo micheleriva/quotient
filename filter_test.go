@@ -28,18 +28,15 @@ func generateRandomUUIDs(n int) [][]byte {
 	return uuids
 }
 
-func BenchmarkQuotientFilterLookup(b *testing.B) {
+func BenchmarkQuotientFilterExists(b *testing.B) {
 	qf := NewQuotientFilter(22) // 2^22, 4,194,304 slots
-
-	b.Log("Generating random UUIDs...")
 	uuids := generateRandomUUIDs(numItems)
 
-	b.Log("Inserting UUIDs into the filter...")
 	for _, id := range uuids {
 		qf.Insert(id)
 	}
 
-	b.Log("Generating lookup UUIDs...")
+	// Prepare lookup UUIDs: 50% existing, 50% non-existing
 	lookupUUIDs := make([][]byte, benchLookup)
 	for i := range lookupUUIDs {
 		if i < benchLookup/2 {
@@ -51,10 +48,11 @@ func BenchmarkQuotientFilterLookup(b *testing.B) {
 	}
 
 	b.ResetTimer()
-	b.Log("Starting benchmark...")
 	b.RunParallel(func(pb *testing.PB) {
+		// Use a local RNG to avoid lock contention
+		localRng := rand.New(rand.NewSource(rand.Int63()))
 		for pb.Next() {
-			id := lookupUUIDs[rand.Intn(len(lookupUUIDs))]
+			id := lookupUUIDs[localRng.Intn(len(lookupUUIDs))]
 			qf.Exists(id)
 		}
 	})
