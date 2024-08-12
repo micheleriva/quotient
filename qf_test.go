@@ -189,51 +189,51 @@ func TestQuotientFilterFalsePositives(t *testing.T) {
 	}
 }
 
-//func TestQuotientFilterOverflow(t *testing.T) {
-//	const logSize = 8 // 2^8 = 256 slots
-//	qf := New(logSize)
-//	capacity := 1 << logSize
-//
-//	// Generate random numbers for insertion
-//	rand.Seed(time.Now().UnixNano())
-//	numbers := make(map[uint64]bool)
-//	for len(numbers) < capacity {
-//		numbers[rand.Uint64()] = true
-//	}
-//
-//	for num := range numbers {
-//		_ = qf.Insert(uint64ToBytes(num))
-//	}
-//
-//	extraInsertions := capacity / 4 // Try inserting 25% more items
-//	extraInsertionFailures := 0
-//	for i := 0; i < extraInsertions; i++ {
-//		num := rand.Uint64()
-//		err := qf.Insert(uint64ToBytes(num))
-//		if err != nil {
-//			extraInsertionFailures++
-//		} else {
-//			numbers[num] = true
-//		}
-//	}
-//
-//	finalCount := qf.Count()
-//	t.Logf("Final count after extra insertions: %d", finalCount)
-//
-//	falseNegatives := 0
-//	for num := range numbers {
-//		exists, _ := qf.Exists(uint64ToBytes(num))
-//		if !exists {
-//			falseNegatives++
-//		}
-//	}
-//	falseNegativeRate := float64(falseNegatives) / float64(len(numbers))
-//	t.Logf("Final false negative rate: %.4f", falseNegativeRate)
-//
-//	if falseNegativeRate > 0.01 { // Allow up to 1% false negative rate
-//		t.Errorf("False negative rate too high: %.4f", falseNegativeRate)
-//	}
-//}
+func TestQuotientFilterOverflow(t *testing.T) {
+	const logSize = 14 // 2^14 = 16,384 slots
+	qf := New(logSize)
+	capacity := 1 << logSize
+
+	// Generate random numbers for insertion
+	rand.Seed(time.Now().UnixNano())
+	numbers := make(map[uint64]bool)
+	for len(numbers) < capacity {
+		numbers[rand.Uint64()] = true
+	}
+
+	for num := range numbers {
+		_ = qf.Insert(uint64ToBytes(num))
+	}
+
+	extraInsertions := capacity / 4 // Try inserting 25% more items
+	extraInsertionFailures := 0
+	for i := 0; i < extraInsertions; i++ {
+		num := rand.Uint64()
+		err := qf.Insert(uint64ToBytes(num))
+		if err != nil {
+			extraInsertionFailures++
+		} else {
+			numbers[num] = true
+		}
+	}
+
+	finalCount := qf.Count()
+	t.Logf("Final count after extra insertions: %d", finalCount)
+
+	falseNegatives := 0
+	for num := range numbers {
+		exists, _ := qf.Exists(uint64ToBytes(num))
+		if !exists {
+			falseNegatives++
+		}
+	}
+	falseNegativeRate := float64(falseNegatives) / float64(len(numbers))
+	t.Logf("Final false negative rate: %.4f", falseNegativeRate)
+
+	if falseNegativeRate > 0.01 { // Allow up to 1% false negative rate
+		t.Errorf("False negative rate too high: %.4f", falseNegativeRate)
+	}
+}
 
 func TestQuotientFilterEdgeCases(t *testing.T) {
 	qf := New(10)
