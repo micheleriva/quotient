@@ -112,15 +112,7 @@ func (qf *QuotientFilter) Remove(data []byte) bool {
 
 	for slot := runStart; ; slot = (slot + 1) & qf.mask {
 		if qf.getRemainder(slot) == remainder {
-			qf.clearSlot(slot)
-			qf.count--
-
-			if runStart == runEnd {
-				qf.data[quotient] &= ^uint64(occupied)
-			} else {
-				qf.shiftLeft(slot, runEnd)
-			}
-
+			qf.removeAt(slot, quotient, runStart, runEnd)
 			return true
 		}
 
@@ -138,12 +130,77 @@ func (qf *QuotientFilter) Count() int {
 	return qf.count
 }
 
+func (qf *QuotientFilter) removeAt(slot, quotient, runStart, runEnd uint64) {
+	isOnlyItemInRun := runStart == runEnd
+	isFirstItemInRun := slot == runStart
+	isLastItemInRun := slot == runEnd
+
+	qf.shiftLeft(slot, runEnd)
+	qf.count--
+
+	if isOnlyItemInRun {
+		qf.clearOccupied(quotient)
+	} else {
+		if isFirstItemInRun {
+			newRunStart := (slot + 1) & qf.mask
+			qf.clearRunStart(slot)
+			qf.setRunStart(newRunStart)
+			if newRunStart != quotient {
+				qf.setShifted(newRunStart)
+			}
+		}
+		if isLastItemInRun {
+			newRunEnd := (runEnd - 1) & qf.mask
+			qf.setRunEnd(newRunEnd)
+		}
+	}
+
+	qf.updateMetadataAfterRemoval(quotient)
+}
+
+func (qf *QuotientFilter) updateMetadataAfterRemoval(quotient uint64) {
+	if !qf.isOccupied(quotient) {
+		return
+	}
+
+	runStart := qf.findRunStart(quotient)
+	runEnd := qf.findRunEnd(quotient)
+
+	if runStart == runEnd {
+		qf.setRunStart(runStart)
+		qf.setRunEnd(runStart)
+		qf.clearShifted(runStart)
+	} else {
+		qf.setRunStart(runStart)
+		qf.setRunEnd(runEnd)
+		for slot := (runStart + 1) & qf.mask; slot != (runEnd+1)&qf.mask; slot = (slot + 1) & qf.mask {
+			qf.setShifted(slot)
+		}
+	}
+
+	if qf.getRemainder(runStart) == 0 && !qf.isShifted(runStart) {
+		qf.clearOccupied(quotient)
+	}
+}
+
+func (qf *QuotientFilter) clearOccupied(index uint64) {
+	qf.data[index&qf.mask] &= ^uint64(occupied)
+}
+
 func (qf *QuotientFilter) isOccupied(index uint64) bool {
 	return qf.data[index&qf.mask]&occupied != 0
 }
 
 func (qf *QuotientFilter) setOccupied(index uint64) {
 	qf.data[index&qf.mask] |= occupied
+}
+
+func (qf *QuotientFilter) clearRunStart(index uint64) {
+	qf.data[index&qf.mask] &= ^uint64(runStart)
+}
+
+func (qf *QuotientFilter) clearRunEnd(index uint64) {
+	qf.data[index&qf.mask] &= ^uint64(runEnd)
 }
 
 func (qf *QuotientFilter) isRunStart(index uint64) bool {
@@ -233,10 +290,6 @@ func (qf *QuotientFilter) insertRemainder(slot uint64, remainder uint64, quotien
 	return nil
 }
 
-func (qf *QuotientFilter) clearRunEnd(index uint64) {
-	qf.data[index] &= ^uint64(runEnd)
-}
-
 func (qf *QuotientFilter) shiftRight(slot uint64) error {
 	currentSlot := slot
 	for {
@@ -258,27 +311,41 @@ func (qf *QuotientFilter) shiftRight(slot uint64) error {
 	return nil
 }
 
-func (qf *QuotientFilter) clearSlot(slot uint64) {
-	qf.data[slot] = 0
+func (qf *QuotientFilter) clearSlot(index uint64) {
+	qf.data[index&qf.mask] = 0
+}
+
+func (qf *QuotientFilter) clearShifted(index uint64) {
+	qf.data[index&qf.mask] &= ^uint64(shifted)
 }
 
 func (qf *QuotientFilter) shiftLeft(start, end uint64) {
-	for slot := start; slot != end; slot = (slot + 1) & qf.mask {
-		nextSlot := (slot + 1) & qf.mask
-		qf.data[slot] = qf.data[nextSlot]
+	current := start
+	next := (start + 1) & qf.mask
 
-		if !qf.isShifted(nextSlot) {
-			break
+	for current != end {
+		qf.data[current] = qf.data[next]
+
+		if qf.isShifted(next) {
+			qf.setShifted(current)
+		} else {
+			qf.clearShifted(current)
 		}
+
+		if qf.isRunStart(next) {
+			qf.clearRunStart(next)
+			qf.setRunStart(current)
+		}
+		if qf.isRunEnd(next) {
+			qf.clearRunEnd(next)
+			qf.setRunEnd(current)
+		}
+
+		current = next
+		next = (next + 1) & qf.mask
 	}
 
-	lastSlot := end
-	qf.clearSlot(lastSlot)
-
-	if !qf.isOccupied(lastSlot) {
-		prevSlot := (lastSlot - 1) & qf.mask
-		qf.setRunEnd(prevSlot)
-	}
+	qf.clearSlot(end)
 }
 
 func (qf *QuotientFilter) isFull() bool {
