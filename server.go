@@ -53,6 +53,10 @@ func StartServer(config *Config) {
 			v1RemoveHandler(ctx)
 		case "/v1/count":
 			v1CountHandler(ctx)
+		case "/v1/add_peer":
+			v1AddPeerHandler(ctx)
+		case "/v1/remove_peer":
+			v1RemovePeerHandler(ctx)
 		default:
 			notFoundHandler(ctx)
 		}
@@ -81,10 +85,9 @@ func v1InsertHandler(ctx *fasthttp.RequestCtx) {
 	}
 
 	body := ctx.PostBody()
-	bodyString := []byte(string(body))
 	var jsonBody V1InsertParams
 
-	err := json.Unmarshal(bodyString, &jsonBody)
+	err := json.Unmarshal(body, &jsonBody)
 	if err != nil {
 		ctx.SetStatusCode(fasthttp.StatusBadRequest)
 		ctx.SetBody([]byte(err.Error()))
@@ -97,10 +100,18 @@ func v1InsertHandler(ctx *fasthttp.RequestCtx) {
 		return
 	}
 
-	insertError := QF.Insert([]byte(jsonBody.Key))
+	if !ServerRaftNode.IsLeader() {
+		leaderAddr := ServerRaftNode.LeaderAddress()
+		ctx.SetStatusCode(fasthttp.StatusTemporaryRedirect)
+		ctx.Response.Header.Set("Location", "http://"+leaderAddr+"/v1/insert")
+		return
+	}
+
+	insertError := ServerRaftNode.Insert(jsonBody.Key)
 	if insertError != nil {
 		ctx.SetStatusCode(fasthttp.StatusInternalServerError)
 		ctx.SetBody([]byte(insertError.Error()))
+		return
 	}
 
 	response := V1InsertResponse{Key: jsonBody.Key, Status: "inserted"}
@@ -130,6 +141,13 @@ func v1ExistsHandler(ctx *fasthttp.RequestCtx) {
 		return
 	}
 
+	if !ServerRaftNode.IsLeader() {
+		leaderAddr := ServerRaftNode.LeaderAddress()
+		ctx.SetStatusCode(fasthttp.StatusTemporaryRedirect)
+		ctx.Response.Header.Set("Location", "http://"+leaderAddr+"/v1/exists?key="+key)
+		return
+	}
+
 	exists, elapsed := QF.Exists([]byte(key))
 	response := V1ExistsResponse{Key: key, Exists: exists, Elapsed: elapsed}
 	responseJSON, err := json.Marshal(response)
@@ -152,10 +170,9 @@ func v1RemoveHandler(ctx *fasthttp.RequestCtx) {
 	}
 
 	body := ctx.PostBody()
-	bodyString := []byte(string(body))
 	var jsonBody V1RemoveParams
 
-	err := json.Unmarshal(bodyString, &jsonBody)
+	err := json.Unmarshal(body, &jsonBody)
 	if err != nil {
 		ctx.SetStatusCode(fasthttp.StatusBadRequest)
 		ctx.SetBody([]byte(err.Error()))
@@ -168,8 +185,21 @@ func v1RemoveHandler(ctx *fasthttp.RequestCtx) {
 		return
 	}
 
-	removed := QF.Remove([]byte(jsonBody.Key))
-	response := V1RemoveResponse{Key: jsonBody.Key, Removed: removed}
+	if !ServerRaftNode.IsLeader() {
+		leaderAddr := ServerRaftNode.LeaderAddress()
+		ctx.SetStatusCode(fasthttp.StatusTemporaryRedirect)
+		ctx.Response.Header.Set("Location", "http://"+leaderAddr+"/v1/remove")
+		return
+	}
+
+	removeError := ServerRaftNode.Remove(jsonBody.Key)
+	if removeError != nil {
+		ctx.SetStatusCode(fasthttp.StatusInternalServerError)
+		ctx.SetBody([]byte(removeError.Error()))
+		return
+	}
+
+	response := V1RemoveResponse{Key: jsonBody.Key, Removed: true}
 	responseJSON, err := json.Marshal(response)
 	if err != nil {
 		ctx.SetStatusCode(fasthttp.StatusInternalServerError)
@@ -180,13 +210,19 @@ func v1RemoveHandler(ctx *fasthttp.RequestCtx) {
 	ctx.SetStatusCode(fasthttp.StatusOK)
 	ctx.SetContentType("application/json")
 	ctx.SetBody(responseJSON)
-
 }
 
 func v1CountHandler(ctx *fasthttp.RequestCtx) {
 	if !ctx.IsGet() {
 		ctx.SetStatusCode(fasthttp.StatusMethodNotAllowed)
 		ctx.SetBody([]byte("Method not allowed"))
+		return
+	}
+
+	if !ServerRaftNode.IsLeader() {
+		leaderAddr := ServerRaftNode.LeaderAddress()
+		ctx.SetStatusCode(fasthttp.StatusTemporaryRedirect)
+		ctx.Response.Header.Set("Location", "http://"+leaderAddr+"/v1/count")
 		return
 	}
 
@@ -202,4 +238,59 @@ func v1CountHandler(ctx *fasthttp.RequestCtx) {
 	ctx.SetStatusCode(fasthttp.StatusOK)
 	ctx.SetContentType("application/json")
 	ctx.SetBody(responseJSON)
+}
+
+func v1AddPeerHandler(ctx *fasthttp.RequestCtx) {
+	if !ctx.IsPost() {
+		ctx.SetStatusCode(fasthttp.StatusMethodNotAllowed)
+		ctx.SetBody([]byte("Method not allowed"))
+		return
+	}
+
+	var params struct {
+		NodeID string `json:"node_id"`
+		Addr   string `json:"addr"`
+	}
+
+	if err := json.Unmarshal(ctx.PostBody(), &params); err != nil {
+		ctx.SetStatusCode(fasthttp.StatusBadRequest)
+		ctx.SetBody([]byte("Invalid JSON"))
+		return
+	}
+
+	if err := ServerRaftNode.AddPeer(params.NodeID, params.Addr); err != nil {
+		ctx.SetStatusCode(fasthttp.StatusInternalServerError)
+		ctx.SetBody([]byte(err.Error()))
+		return
+	}
+
+	ctx.SetStatusCode(fasthttp.StatusOK)
+	ctx.SetBody([]byte("Peer added successfully"))
+}
+
+func v1RemovePeerHandler(ctx *fasthttp.RequestCtx) {
+	if !ctx.IsPost() {
+		ctx.SetStatusCode(fasthttp.StatusMethodNotAllowed)
+		ctx.SetBody([]byte("Method not allowed"))
+		return
+	}
+
+	var params struct {
+		NodeID string `json:"node_id"`
+	}
+
+	if err := json.Unmarshal(ctx.PostBody(), &params); err != nil {
+		ctx.SetStatusCode(fasthttp.StatusBadRequest)
+		ctx.SetBody([]byte("Invalid JSON"))
+		return
+	}
+
+	if err := ServerRaftNode.RemovePeer(params.NodeID); err != nil {
+		ctx.SetStatusCode(fasthttp.StatusInternalServerError)
+		ctx.SetBody([]byte(err.Error()))
+		return
+	}
+
+	ctx.SetStatusCode(fasthttp.StatusOK)
+	ctx.SetBody([]byte("Peer removed successfully"))
 }

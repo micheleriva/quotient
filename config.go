@@ -11,8 +11,8 @@ import (
 
 type Config struct {
 	Quotient struct {
-		LogSize uint `yaml:"logSize"`
-	}
+		LogSize uint `yaml:"log_size"`
+	} `yaml:"quotient"`
 
 	Server struct {
 		Host        string `yaml:"host"`
@@ -42,7 +42,7 @@ const (
 func createDefaultConfig() *Config {
 	return &Config{
 		Quotient: struct {
-			LogSize uint `yaml:"logSize"`
+			LogSize uint `yaml:"log_size"`
 		}{
 			LogSize: defaultLogSize,
 		},

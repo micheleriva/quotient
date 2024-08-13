@@ -2,11 +2,14 @@ package main
 
 import (
 	"fmt"
+	"log"
+	"sync"
 )
 
 var (
-	Configuration *Config
-	QF            *QuotientFilter
+	Configuration  *Config
+	QF             *QuotientFilter
+	ServerRaftNode *RaftNode
 )
 
 func init() {
@@ -16,9 +19,37 @@ func init() {
 	}
 
 	Configuration = config
+
+	log.Printf("Loaded configuration:")
+	log.Printf("Server Host: %s", config.Server.Host)
+	log.Printf("Server Port: %d", config.Server.Port)
+	log.Printf("Raft Node ID: %s", config.Raft.NodeID)
+	log.Printf("Raft TCP Address: %s", config.Raft.TCPAddress)
+	log.Printf("Raft Log Directory: %s", config.Raft.LogDir)
+	log.Printf("Raft Snapshot Directory: %s", config.Raft.SnapshotDir)
+	log.Printf("Raft Timeout: %s", config.Raft.Timeout)
+	log.Printf("QF Size: %d", uint64(1)<<config.Quotient.LogSize)
+	log.Println()
+
 	QF = NewQuotientFilter(config.Quotient.LogSize)
 }
 
 func main() {
-	StartServer(Configuration)
+	log.Printf("Creating Raft node with log directory: %s", Configuration.Raft.LogDir)
+	log.Printf("Creating Raft node with snapshot directory: %s", Configuration.Raft.SnapshotDir)
+
+	raftNode, err := NewRaftNode(Configuration, QF)
+	if err != nil {
+		log.Fatalf("Failed to create Raft node: %v", err)
+	}
+	ServerRaftNode = raftNode
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		StartServer(Configuration)
+	}()
+
+	wg.Wait()
 }
