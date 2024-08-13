@@ -13,13 +13,14 @@ const (
 	runStart = 1 << 1
 	runEnd   = 1 << 2
 	shifted  = 1 << 3
+	stripes  = 16 // Number of stripes for striped locking
 )
 
 type QuotientFilter struct {
 	data     []uint64
 	mask     uint64
 	quotient uint
-	mu       sync.RWMutex
+	locks    [stripes]sync.RWMutex
 	count    atomic.Int64
 }
 
@@ -33,14 +34,14 @@ func NewQuotientFilter(logSize uint) *QuotientFilter {
 }
 
 func (qf *QuotientFilter) Insert(data []byte) error {
-	qf.mu.Lock()
-	defer qf.mu.Unlock()
-
 	quotient, remainder := qf.hash(data)
 
 	if qf.count.Load() >= int64(len(qf.data)) {
 		return fmt.Errorf("filter is full")
 	}
+
+	qf.lockStripe(quotient)
+	defer qf.unlockStripe(quotient)
 
 	exists := qf.existsUnsafe(quotient, remainder)
 	if exists {
@@ -55,10 +56,10 @@ func (qf *QuotientFilter) Insert(data []byte) error {
 
 func (qf *QuotientFilter) Exists(data []byte) (bool, time.Duration) {
 	startTime := time.Now()
-	qf.mu.RLock()
-	defer qf.mu.RUnlock()
-
 	quotient, remainder := qf.hash(data)
+
+	qf.rLockStripe(quotient)
+	defer qf.rUnlockStripe(quotient)
 
 	if !qf.isOccupied(quotient) {
 		return false, time.Since(startTime)
@@ -80,10 +81,10 @@ func (qf *QuotientFilter) Exists(data []byte) (bool, time.Duration) {
 }
 
 func (qf *QuotientFilter) Remove(data []byte) bool {
-	qf.mu.Lock()
-	defer qf.mu.Unlock()
-
 	quotient, remainder := qf.hash(data)
+
+	qf.lockStripe(quotient)
+	defer qf.unlockStripe(quotient)
 
 	if !qf.isOccupied(quotient) {
 		return false
@@ -196,56 +197,104 @@ func (qf *QuotientFilter) updateMetadataAfterRemoval(quotient uint64) {
 	}
 }
 
-func (qf *QuotientFilter) clearOccupied(index uint64) {
-	qf.data[index&qf.mask] &= ^uint64(occupied)
-}
-
 func (qf *QuotientFilter) isOccupied(index uint64) bool {
-	return qf.data[index&qf.mask]&occupied != 0
+	return atomic.LoadUint64(&qf.data[index&qf.mask])&occupied != 0
 }
 
 func (qf *QuotientFilter) setOccupied(index uint64) {
-	qf.data[index&qf.mask] |= occupied
+	for {
+		old := atomic.LoadUint64(&qf.data[index&qf.mask])
+		new := old | occupied
+		if atomic.CompareAndSwapUint64(&qf.data[index&qf.mask], old, new) {
+			return
+		}
+	}
+}
+
+func (qf *QuotientFilter) clearOccupied(index uint64) {
+	for {
+		old := atomic.LoadUint64(&qf.data[index&qf.mask])
+		new := old &^ occupied
+		if atomic.CompareAndSwapUint64(&qf.data[index&qf.mask], old, new) {
+			return
+		}
+	}
 }
 
 func (qf *QuotientFilter) clearRunStart(index uint64) {
-	qf.data[index&qf.mask] &= ^uint64(runStart)
+	for {
+		old := atomic.LoadUint64(&qf.data[index&qf.mask])
+		new := old &^ uint64(runStart)
+		if atomic.CompareAndSwapUint64(&qf.data[index&qf.mask], old, new) {
+			return
+		}
+	}
 }
 
 func (qf *QuotientFilter) clearRunEnd(index uint64) {
-	qf.data[index&qf.mask] &= ^uint64(runEnd)
+	for {
+		old := atomic.LoadUint64(&qf.data[index&qf.mask])
+		new := old &^ uint64(runEnd)
+		if atomic.CompareAndSwapUint64(&qf.data[index&qf.mask], old, new) {
+			return
+		}
+	}
 }
 
 func (qf *QuotientFilter) isRunStart(index uint64) bool {
-	return qf.data[index&qf.mask]&runStart != 0
+	return atomic.LoadUint64(&qf.data[index&qf.mask])&runStart != 0
 }
 
 func (qf *QuotientFilter) setRunStart(index uint64) {
-	qf.data[index&qf.mask] |= runStart
+	for {
+		old := atomic.LoadUint64(&qf.data[index&qf.mask])
+		new := old | runStart
+		if atomic.CompareAndSwapUint64(&qf.data[index&qf.mask], old, new) {
+			return
+		}
+	}
 }
 
 func (qf *QuotientFilter) isRunEnd(index uint64) bool {
-	return qf.data[index&qf.mask]&runEnd != 0
+	return atomic.LoadUint64(&qf.data[index&qf.mask])&runEnd != 0
 }
 
 func (qf *QuotientFilter) setRunEnd(index uint64) {
-	qf.data[index&qf.mask] |= runEnd
+	for {
+		old := atomic.LoadUint64(&qf.data[index&qf.mask])
+		new := old | runEnd
+		if atomic.CompareAndSwapUint64(&qf.data[index&qf.mask], old, new) {
+			return
+		}
+	}
 }
 
 func (qf *QuotientFilter) isShifted(index uint64) bool {
-	return qf.data[index&qf.mask]&shifted != 0
+	return atomic.LoadUint64(&qf.data[index&qf.mask])&shifted != 0
 }
 
 func (qf *QuotientFilter) setShifted(index uint64) {
-	qf.data[index&qf.mask] |= shifted
+	for {
+		old := atomic.LoadUint64(&qf.data[index&qf.mask])
+		new := old | shifted
+		if atomic.CompareAndSwapUint64(&qf.data[index&qf.mask], old, new) {
+			return
+		}
+	}
 }
 
 func (qf *QuotientFilter) getRemainder(index uint64) uint64 {
-	return qf.data[index&qf.mask] >> 4
+	return atomic.LoadUint64(&qf.data[index&qf.mask]) >> 4
 }
 
 func (qf *QuotientFilter) setRemainder(index uint64, remainder uint64) {
-	qf.data[index&qf.mask] = (qf.data[index&qf.mask] & 0xF) | (remainder << 4)
+	for {
+		old := atomic.LoadUint64(&qf.data[index&qf.mask])
+		new := (old & 0xF) | (remainder << 4)
+		if atomic.CompareAndSwapUint64(&qf.data[index&qf.mask], old, new) {
+			return
+		}
+	}
 }
 
 func (qf *QuotientFilter) findSlot(quotient uint64) uint64 {
@@ -318,7 +367,7 @@ func (qf *QuotientFilter) shiftRight(slot uint64) error {
 
 	for currentSlot != slot {
 		prevSlot := (currentSlot - 1) & qf.mask
-		qf.data[currentSlot] = qf.data[prevSlot]
+		atomic.StoreUint64(&qf.data[currentSlot], atomic.LoadUint64(&qf.data[prevSlot]))
 		qf.setShifted(currentSlot)
 		currentSlot = prevSlot
 	}
@@ -328,16 +377,27 @@ func (qf *QuotientFilter) shiftRight(slot uint64) error {
 }
 
 func (qf *QuotientFilter) clearSlot(index uint64) {
-	qf.data[index&qf.mask] = 0
+	atomic.StoreUint64(&qf.data[index&qf.mask], 0)
 }
 
 func (qf *QuotientFilter) clearRemainder(index uint64) {
-	// Clear all but the lowest 4 bits (metadata)
-	qf.data[index&qf.mask] &= 0xF
+	for {
+		old := atomic.LoadUint64(&qf.data[index&qf.mask])
+		new := old & 0xF // Clear all but the lowest 4 bits (metadata)
+		if atomic.CompareAndSwapUint64(&qf.data[index&qf.mask], old, new) {
+			return
+		}
+	}
 }
 
 func (qf *QuotientFilter) clearShifted(index uint64) {
-	qf.data[index&qf.mask] &= ^uint64(shifted)
+	for {
+		old := atomic.LoadUint64(&qf.data[index&qf.mask])
+		new := old &^ uint64(shifted)
+		if atomic.CompareAndSwapUint64(&qf.data[index&qf.mask], old, new) {
+			return
+		}
+	}
 }
 
 func (qf *QuotientFilter) shiftLeft(start, end uint64) {
@@ -345,7 +405,7 @@ func (qf *QuotientFilter) shiftLeft(start, end uint64) {
 	next := (start + 1) & qf.mask
 
 	for current != end {
-		qf.data[current] = qf.data[next]
+		atomic.StoreUint64(&qf.data[current], atomic.LoadUint64(&qf.data[next]))
 		current = next
 		next = (next + 1) & qf.mask
 	}
@@ -394,15 +454,15 @@ func (qf *QuotientFilter) insertIntoSlot(slot uint64, remainder uint64, quotient
 	for {
 		if !qf.isOccupied(slot) {
 			qf.setRemainder(slot, currRemainder)
-			qf.data[slot] = (qf.data[slot] & ^uint64(0xF)) | currMetadata | runEnd
+			atomic.StoreUint64(&qf.data[slot], (qf.data[slot]&^uint64(0xF))|currMetadata|runEnd)
 			return
 		}
 
 		prevRemainder = qf.getRemainder(slot)
-		prevMetadata = qf.data[slot] & 0xF
+		prevMetadata = atomic.LoadUint64(&qf.data[slot]) & 0xF
 
 		qf.setRemainder(slot, currRemainder)
-		qf.data[slot] = (qf.data[slot] & ^uint64(0xF)) | currMetadata
+		atomic.StoreUint64(&qf.data[slot], (qf.data[slot]&^uint64(0xF))|currMetadata)
 
 		currRemainder = prevRemainder
 		currMetadata = prevMetadata | shifted
@@ -414,7 +474,23 @@ func (qf *QuotientFilter) insertIntoSlot(slot uint64, remainder uint64, quotient
 
 		slot = (slot + 1) & qf.mask
 		if slot == originalSlot {
-			panic("Filter is full") // This should never happen if we check capacity before inserting
+			panic("Filter is full")
 		}
 	}
+}
+
+func (qf *QuotientFilter) lockStripe(index uint64) {
+	qf.locks[index%stripes].Lock()
+}
+
+func (qf *QuotientFilter) unlockStripe(index uint64) {
+	qf.locks[index%stripes].Unlock()
+}
+
+func (qf *QuotientFilter) rLockStripe(index uint64) {
+	qf.locks[index%stripes].RLock()
+}
+
+func (qf *QuotientFilter) rUnlockStripe(index uint64) {
+	qf.locks[index%stripes].RUnlock()
 }
