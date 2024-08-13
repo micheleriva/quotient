@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"hash/fnv"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -19,7 +20,7 @@ type QuotientFilter struct {
 	mask     uint64
 	quotient uint
 	mu       sync.RWMutex
-	count    int
+	count    atomic.Int64
 }
 
 func NewQuotientFilter(logSize uint) *QuotientFilter {
@@ -28,7 +29,6 @@ func NewQuotientFilter(logSize uint) *QuotientFilter {
 		data:     make([]uint64, size),
 		mask:     size - 1,
 		quotient: logSize,
-		count:    0,
 	}
 }
 
@@ -38,7 +38,7 @@ func (qf *QuotientFilter) Insert(data []byte) error {
 
 	quotient, remainder := qf.hash(data)
 
-	if qf.count >= len(qf.data) {
+	if qf.count.Load() >= int64(len(qf.data)) {
 		return fmt.Errorf("filter is full")
 	}
 
@@ -49,7 +49,7 @@ func (qf *QuotientFilter) Insert(data []byte) error {
 
 	slot := qf.findSlot(quotient)
 	qf.insertIntoSlot(slot, remainder, quotient)
-	qf.count++
+	qf.count.Add(1)
 	return nil
 }
 
@@ -95,7 +95,7 @@ func (qf *QuotientFilter) Remove(data []byte) bool {
 	for slot := runStart; ; slot = (slot + 1) & qf.mask {
 		if qf.getRemainder(slot) == remainder {
 			qf.removeAt(slot, quotient, runStart, runEnd)
-			qf.count--
+			qf.count.Add(-1)
 			return true
 		}
 		if slot == runEnd {
@@ -107,9 +107,7 @@ func (qf *QuotientFilter) Remove(data []byte) bool {
 }
 
 func (qf *QuotientFilter) Count() int {
-	qf.mu.RLock()
-	defer qf.mu.RUnlock()
-	return qf.count
+	return int(qf.count.Load())
 }
 
 func (qf *QuotientFilter) existsUnsafe(quotient, remainder uint64) bool {
@@ -304,7 +302,7 @@ func (qf *QuotientFilter) insertRemainder(slot uint64, remainder uint64, quotien
 		qf.clearRunEnd((currentSlot - 1) & qf.mask)
 	}
 
-	qf.count++
+	qf.count.Add(1)
 	return nil
 }
 
@@ -356,7 +354,7 @@ func (qf *QuotientFilter) shiftLeft(start, end uint64) {
 }
 
 func (qf *QuotientFilter) isFull() bool {
-	return qf.count >= len(qf.data)
+	return qf.count.Load() >= int64(len(qf.data))
 }
 
 func (qf *QuotientFilter) findRunStart(quotient uint64) uint64 {
