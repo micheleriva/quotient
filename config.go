@@ -22,11 +22,12 @@ type Config struct {
 	} `yaml:"server"`
 
 	Raft struct {
-		NodeID      string        `yaml:"node_id"`
-		TCPAddress  string        `yaml:"tcp_address"`
-		Timeout     time.Duration `yaml:"timeout"`
-		SnapshotDir string        `yaml:"snapshot_dir"`
-		LogDir      string        `yaml:"log_dir"`
+		NodeID        string        `yaml:"node_id"`
+		TCPAddress    string        `yaml:"tcp_address"`
+		Timeout       time.Duration `yaml:"timeout"`
+		SnapshotDir   string        `yaml:"snapshot_dir"`
+		LogDir        string        `yaml:"log_dir"`
+		PeerAddresses []string      `yaml:"peer_addresses"`
 	} `yaml:"raft"`
 }
 
@@ -60,17 +61,19 @@ func createDefaultConfig() *Config {
 		},
 
 		Raft: struct {
-			NodeID      string        `yaml:"node_id"`
-			TCPAddress  string        `yaml:"tcp_address"`
-			Timeout     time.Duration `yaml:"timeout"`
-			SnapshotDir string        `yaml:"snapshot_dir"`
-			LogDir      string        `yaml:"log_dir"`
+			NodeID        string        `yaml:"node_id"`
+			TCPAddress    string        `yaml:"tcp_address"`
+			Timeout       time.Duration `yaml:"timeout"`
+			SnapshotDir   string        `yaml:"snapshot_dir"`
+			LogDir        string        `yaml:"log_dir"`
+			PeerAddresses []string      `yaml:"peer_addresses"`
 		}{
-			NodeID:      GenerateUUID(),
-			TCPAddress:  fmt.Sprintf("0.0.0.0:%d", defaultServerPort),
-			Timeout:     10 * time.Second,
-			SnapshotDir: defaultSnapshotDir,
-			LogDir:      defaultLogDir,
+			NodeID:        GenerateUUID(),
+			TCPAddress:    fmt.Sprintf("0.0.0.0:%d", defaultServerPort),
+			Timeout:       10 * time.Second,
+			SnapshotDir:   defaultSnapshotDir,
+			LogDir:        defaultLogDir,
+			PeerAddresses: []string{},
 		},
 	}
 }
@@ -104,6 +107,9 @@ func mergeConfigs(defaultConfig, userConfig Config) Config {
 	}
 	if userConfig.Raft.LogDir != "" {
 		mergedConfig.Raft.LogDir = userConfig.Raft.LogDir
+	}
+	if userConfig.Raft.PeerAddresses != nil {
+		mergedConfig.Raft.PeerAddresses = userConfig.Raft.PeerAddresses
 	}
 
 	return mergedConfig

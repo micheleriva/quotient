@@ -44,6 +44,16 @@ func main() {
 	}
 	ServerRaftNode = raftNode
 
+	log.Printf("Boostrapping cluster with peers %s", Configuration.Raft.PeerAddresses)
+	if err := raftNode.BootstrapCluster(Configuration.Raft.PeerAddresses); err != nil {
+		log.Printf("Failed to bootstrap cluster: %v", err)
+	}
+
+	if err := raftNode.Start(); err != nil {
+		log.Fatalf("Failed to start Raft node: %v", err)
+	}
+	log.Println("Raft node started successfully")
+
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go func() {

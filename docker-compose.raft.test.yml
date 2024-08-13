@@ -1,0 +1,42 @@
+version: '3'
+
+services:
+  node1:
+    build: .
+    ports:
+      - "9001:9001"
+      - "7001:7001"
+    volumes:
+      - ./tests/raft/node1.yaml:/app/quotient.config.yaml
+    networks:
+      raft_network:
+        aliases:
+          - node1
+
+  node2:
+    build: .
+    ports:
+      - "9002:9002"
+      - "7002:7002"
+    volumes:
+      - ./tests/raft/node2.yaml:/app/quotient.config.yaml
+    networks:
+      raft_network:
+        aliases:
+          - node2
+
+  node3:
+    build: .
+    ports:
+      - "9003:9003"
+      - "7003:7003"
+    volumes:
+      - ./tests/raft/node3.yaml:/app/quotient.config.yaml
+    networks:
+      raft_network:
+        aliases:
+          - node3
+
+networks:
+  raft_network:
+    driver: bridge

@@ -3,8 +3,10 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/hashicorp/raft"
 	"github.com/valyala/fasthttp"
 	"log"
+	"strings"
 	"time"
 )
 
@@ -37,9 +39,8 @@ type V1CountResponse struct {
 }
 
 func StartServer(config *Config) {
-	port := fmt.Sprintf(":%d", config.Server.Port)
-	host := config.Server.Host
-	log.Println(fmt.Sprintf("Starting server on at: http://%s%s", host, port))
+	addr := fmt.Sprintf("%s:%d", config.Server.Host, config.Server.Port)
+	log.Printf("Starting server on: http://%s", addr)
 
 	requestHandler := func(ctx *fasthttp.RequestCtx) {
 		switch string(ctx.Path()) {
@@ -62,9 +63,44 @@ func StartServer(config *Config) {
 		}
 	}
 
-	if err := fasthttp.ListenAndServe(port, requestHandler); err != nil {
+	if err := fasthttp.ListenAndServe(addr, requestHandler); err != nil {
 		log.Fatalf("Error in ListenAndServe: %s", err)
 	}
+}
+
+func (rn *RaftNode) BootstrapCluster(peerAddresses []string) error {
+	log.Printf("Attempting to bootstrap cluster with peers: %v", peerAddresses)
+	cfg := rn.raft.GetConfiguration()
+	if err := cfg.Error(); err != nil {
+		return fmt.Errorf("failed to get raft configuration: %v", err)
+	}
+
+	log.Printf("Current configuration: %v", cfg.Configuration().Servers)
+
+	// Only bootstrap if this node is not already part of a configuration
+	if len(cfg.Configuration().Servers) == 0 {
+		servers := make([]raft.Server, 0, len(peerAddresses))
+		for _, addr := range peerAddresses {
+			serverID := raft.ServerID(strings.Split(addr, ":")[0])
+			servers = append(servers, raft.Server{
+				ID:       serverID,
+				Address:  raft.ServerAddress(addr),
+				Suffrage: raft.Voter,
+			})
+		}
+
+		config := raft.Configuration{Servers: servers}
+		log.Printf("Attempting to bootstrap cluster with configuration: %v", config)
+
+		future := rn.raft.BootstrapCluster(config)
+		if err := future.Error(); err != nil && err != raft.ErrCantBootstrap {
+			return fmt.Errorf("failed to bootstrap cluster: %v", err)
+		}
+	} else {
+		log.Printf("Node is already part of a cluster, skipping bootstrap")
+	}
+
+	return nil
 }
 
 func homeHandler(ctx *fasthttp.RequestCtx) {

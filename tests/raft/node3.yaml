@@ -1,0 +1,17 @@
+server:
+  host: "0.0.0.0"
+  port: 9003
+
+raft:
+  node_id: "node3"
+  tcp_address: "node3:7003"
+  log_dir: "/quotient/raft/logs"
+  snapshot_dir: "/quotient/raft/snapshots"
+  timeout: "60s"
+  peer_addresses:
+    - 'node1:7001'
+    - 'node2:7002'
+    - 'node3:7003'
+
+quotient:
+  log_size: 22

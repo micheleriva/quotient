@@ -6,6 +6,7 @@ import (
 	"encoding/gob"
 	"encoding/json"
 	"fmt"
+	"github.com/hashicorp/go-hclog"
 	"github.com/hashicorp/raft"
 	raftboltdb "github.com/hashicorp/raft-boltdb"
 	"io"
@@ -13,6 +14,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -141,6 +143,8 @@ func (f *FSMSnapshot) Persist(sink raft.SnapshotSink) error {
 func (f *FSMSnapshot) Release() {}
 
 func NewRaftNode(config *Config, qf *QuotientFilter) (*RaftNode, error) {
+	log.Printf("Creating Raft node with ID: %s, TCP Address: %s", config.Raft.NodeID, config.Raft.TCPAddress)
+
 	fsm := &FSM{qf: qf}
 
 	if err := os.MkdirAll(config.Raft.LogDir, 0755); err != nil {
@@ -166,28 +170,64 @@ func NewRaftNode(config *Config, qf *QuotientFilter) (*RaftNode, error) {
 		return nil, fmt.Errorf("failed to create snapshot store: %v", err)
 	}
 
-	addr, err := net.ResolveTCPAddr("tcp", config.Raft.TCPAddress)
+	advertiseAddr, err := net.ResolveTCPAddr("tcp", config.Raft.TCPAddress)
 	if err != nil {
-		return nil, fmt.Errorf("failed to resolve TCP address: %v", err)
+		return nil, fmt.Errorf("failed to resolve advertise address: %v", err)
 	}
 
-	transport, err := raft.NewTCPTransport(config.Raft.TCPAddress, addr, 3, config.Raft.Timeout, nil)
+	if advertiseAddr.IP == nil || advertiseAddr.IP.IsUnspecified() {
+		hostname, err := os.Hostname()
+		if err != nil {
+			return nil, fmt.Errorf("failed to get hostname: %v", err)
+		}
+		advertiseAddr.IP = net.ParseIP(hostname)
+	}
+
+	transport, err := raft.NewTCPTransport(config.Raft.TCPAddress, advertiseAddr, 3, 10*time.Second, os.Stderr)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create TCP transport: %v", err)
 	}
 
+	logger := hclog.New(&hclog.LoggerOptions{
+		Name:   "raft",
+		Level:  hclog.LevelFromString("INFO"),
+		Output: os.Stderr,
+	})
+
 	raftConfig := raft.DefaultConfig()
+	raftConfig.Logger = logger
 	raftConfig.LocalID = raft.ServerID(config.Raft.NodeID)
+
 	raftConfig.HeartbeatTimeout = config.Raft.Timeout
 	raftConfig.ElectionTimeout = config.Raft.Timeout * 2
 	raftConfig.CommitTimeout = config.Raft.Timeout / 2
 	raftConfig.MaxAppendEntries = 64
 	raftConfig.ShutdownOnRemove = false
 
+	servers := make([]raft.Server, 0, len(config.Raft.PeerAddresses))
+	for _, addr := range config.Raft.PeerAddresses {
+		serverID := raft.ServerID(strings.Split(addr, ":")[0])
+		servers = append(servers, raft.Server{
+			ID:       serverID,
+			Address:  raft.ServerAddress(addr),
+			Suffrage: raft.Voter,
+		})
+	}
+
 	r, err := raft.NewRaft(raftConfig, fsm, logStore, stableStore, snapshots, transport)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create new Raft: %v", err)
 	}
+
+	future := r.BootstrapCluster(raft.Configuration{Servers: servers})
+	if err := future.Error(); err != nil && err != raft.ErrCantBootstrap {
+		return nil, fmt.Errorf("failed to bootstrap cluster: %v", err)
+	}
+
+	logger.Info("Created Raft node",
+		"ID", config.Raft.NodeID,
+		"TCPAddress", config.Raft.TCPAddress,
+		"InitialConfiguration", servers)
 
 	return &RaftNode{
 		raft:        r,
