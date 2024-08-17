@@ -1,0 +1,16 @@
+quotient:
+  log_size: 22
+
+server:
+  port: 9000
+
+raft:
+  node_id: "node-01"
+  tcp_address: "127.0.0.1:9001"
+  log_dir: "~/quotient/raft/logs"
+  snapshot_dir: "~/quotient/raft/snapshots"
+  timeout: "10s"
+  peer_addresses:
+    - 'node1:7000'
+    - 'node2:7000'
+    - 'node3:7000'
