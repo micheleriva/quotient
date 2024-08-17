@@ -7,7 +7,7 @@ raft:
   tcp_address: "node1:7001"
   log_dir: "/quotient/raft/logs"
   snapshot_dir: "/quotient/raft/snapshots"
-  timeout: "60s"
+  timeout: "15s"
   peer_addresses:
     - 'node1:7001'
     - 'node2:7002'

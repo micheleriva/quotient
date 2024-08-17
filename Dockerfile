@@ -16,6 +16,6 @@ WORKDIR /app/
 
 COPY --from=builder /app/quotient .
 
-EXPOSE 9001 9002 9003 7000
+EXPOSE 9001 9002 9003 7001 7002 7003
 
 CMD ["./quotient"]

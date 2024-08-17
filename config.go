@@ -24,6 +24,7 @@ type Config struct {
 	Raft struct {
 		NodeID        string        `yaml:"node_id"`
 		TCPAddress    string        `yaml:"tcp_address"`
+		RPCAddress    string        `yaml:"rpc_address"`
 		Timeout       time.Duration `yaml:"timeout"`
 		SnapshotDir   string        `yaml:"snapshot_dir"`
 		LogDir        string        `yaml:"log_dir"`
@@ -63,6 +64,7 @@ func createDefaultConfig() *Config {
 		Raft: struct {
 			NodeID        string        `yaml:"node_id"`
 			TCPAddress    string        `yaml:"tcp_address"`
+			RPCAddress    string        `yaml:"rpc_address"`
 			Timeout       time.Duration `yaml:"timeout"`
 			SnapshotDir   string        `yaml:"snapshot_dir"`
 			LogDir        string        `yaml:"log_dir"`

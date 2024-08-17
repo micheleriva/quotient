@@ -183,7 +183,7 @@ func NewRaftNode(config *Config, qf *QuotientFilter) (*RaftNode, error) {
 		advertiseAddr.IP = net.ParseIP(hostname)
 	}
 
-	transport, err := raft.NewTCPTransport(config.Raft.TCPAddress, advertiseAddr, 3, 10*time.Second, os.Stderr)
+	transport, err := raft.NewTCPTransport(config.Raft.TCPAddress, nil, 3, 10*time.Second, os.Stderr)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create TCP transport: %v", err)
 	}
@@ -197,10 +197,9 @@ func NewRaftNode(config *Config, qf *QuotientFilter) (*RaftNode, error) {
 	raftConfig := raft.DefaultConfig()
 	raftConfig.Logger = logger
 	raftConfig.LocalID = raft.ServerID(config.Raft.NodeID)
-
-	raftConfig.HeartbeatTimeout = config.Raft.Timeout
-	raftConfig.ElectionTimeout = config.Raft.Timeout * 2
-	raftConfig.CommitTimeout = config.Raft.Timeout / 2
+	raftConfig.HeartbeatTimeout = 2 * time.Second
+	raftConfig.ElectionTimeout = 2 * time.Second
+	raftConfig.CommitTimeout = 100 * time.Millisecond
 	raftConfig.MaxAppendEntries = 64
 	raftConfig.ShutdownOnRemove = false
 
@@ -241,17 +240,22 @@ func NewRaftNode(config *Config, qf *QuotientFilter) (*RaftNode, error) {
 }
 
 func (rn *RaftNode) Start() error {
-	configuration := raft.Configuration{
-		Servers: []raft.Server{
-			{
-				ID:      raft.ServerID(rn.config.Raft.NodeID),
-				Address: rn.transport.LocalAddr(),
+	for i := 0; i < 5; i++ {
+		err := rn.raft.BootstrapCluster(raft.Configuration{
+			Servers: []raft.Server{
+				{
+					ID:      raft.ServerID(rn.config.Raft.NodeID),
+					Address: rn.transport.LocalAddr(),
+				},
 			},
-		},
+		}).Error()
+		if err == nil || err == raft.ErrCantBootstrap {
+			return nil
+		}
+		log.Printf("Failed to bootstrap cluster (attempt %d): %v", i+1, err)
+		time.Sleep(2 * time.Second)
 	}
-
-	rn.raft.BootstrapCluster(configuration)
-	return nil
+	return fmt.Errorf("failed to bootstrap cluster after 5 attempts")
 }
 
 func (rn *RaftNode) Stop() error {
@@ -302,5 +306,6 @@ func (rn *RaftNode) IsLeader() bool {
 }
 
 func (rn *RaftNode) LeaderAddress() string {
-	return string(rn.raft.Leader())
+	leaderAddr, _ := rn.raft.LeaderWithID()
+	return string(leaderAddr)
 }

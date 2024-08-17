@@ -3,7 +3,10 @@ package main
 import (
 	"fmt"
 	"log"
+	"net"
+	"strconv"
 	"sync"
+	"time"
 )
 
 var (
@@ -44,15 +47,47 @@ func main() {
 	}
 	ServerRaftNode = raftNode
 
-	log.Printf("Boostrapping cluster with peers %s", Configuration.Raft.PeerAddresses)
-	if err := raftNode.BootstrapCluster(Configuration.Raft.PeerAddresses); err != nil {
-		log.Printf("Failed to bootstrap cluster: %v", err)
+	if Configuration.Raft.NodeID == "node1" {
+		time.Sleep(5 * time.Second) // @todo: remove sleep
+		log.Println("Node1 attempting to bootstrap cluster")
+		if err := raftNode.BootstrapCluster(Configuration.Raft.PeerAddresses); err != nil {
+			log.Printf("Failed to bootstrap cluster: %v", err)
+		}
+	} else {
+		log.Println("Non-bootstrap node waiting to join cluster")
+		time.Sleep(10 * time.Second) // @todo: remove sleep
 	}
 
-	if err := raftNode.Start(); err != nil {
-		log.Fatalf("Failed to start Raft node: %v", err)
+	// @todo: remove sleep
+	time.Sleep(10 * time.Second)
+
+	_, portStr, err := net.SplitHostPort(Configuration.Raft.TCPAddress)
+	if err != nil {
+		log.Fatalf("Failed to parse Raft TCP address: %v", err)
 	}
-	log.Println("Raft node started successfully")
+	raftPort, err := strconv.Atoi(portStr)
+	if err != nil {
+		log.Fatalf("Failed to parse Raft port: %v", err)
+	}
+
+	raftAddr := fmt.Sprintf("%s:%d", "0.0.0.0", raftPort)
+	go func() {
+		log.Printf("Starting Raft server on: %s", raftAddr)
+		if err := ServerRaftNode.Start(); err != nil {
+			log.Fatalf("Failed to start Raft server: %v", err)
+		}
+	}()
+
+	go func() {
+		for {
+			if raftNode.IsLeader() {
+				log.Println("This node is the current leader")
+			} else {
+				log.Printf("Current leader: %s", raftNode.LeaderAddress())
+			}
+			time.Sleep(30 * time.Second)
+		}
+	}()
 
 	var wg sync.WaitGroup
 	wg.Add(1)

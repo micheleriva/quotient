@@ -1,11 +1,14 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"github.com/hashicorp/raft"
 	"github.com/valyala/fasthttp"
+	"io/ioutil"
 	"log"
+	"net/http"
 	"strings"
 	"time"
 )
@@ -24,9 +27,9 @@ type V1InsertResponse struct {
 }
 
 type V1ExistsResponse struct {
-	Key     string        `json:"key"`
-	Exists  bool          `json:"exists"`
-	Elapsed time.Duration `json:"elapsed"`
+	Key     string `json:"key"`
+	Exists  bool   `json:"exists"`
+	Elapsed string `json:"elapsed"`
 }
 
 type V1RemoveResponse struct {
@@ -38,14 +41,29 @@ type V1CountResponse struct {
 	Count int `json:"count"`
 }
 
+type V1InfoResponse struct {
+	IsLeader bool   `json:"is_leader"`
+	NodeID   string `json:"node_id"`
+	QFSize   int    `json:"qf_size"`
+}
+
+const (
+	maxRetries     = 3
+	retryDelay     = 500 * time.Millisecond
+	dialTimeout    = 10 * time.Second
+	requestTimeout = 15 * time.Second
+)
+
 func StartServer(config *Config) {
-	addr := fmt.Sprintf("%s:%d", config.Server.Host, config.Server.Port)
+	addr := fmt.Sprintf("%s:%d", "0.0.0.0", config.Server.Port)
 	log.Printf("Starting server on: http://%s", addr)
 
 	requestHandler := func(ctx *fasthttp.RequestCtx) {
 		switch string(ctx.Path()) {
 		case "/":
 			homeHandler(ctx)
+		case "/health":
+			healthHandler(ctx)
 		case "/v1/insert":
 			v1InsertHandler(ctx)
 		case "/v1/exists":
@@ -58,6 +76,8 @@ func StartServer(config *Config) {
 			v1AddPeerHandler(ctx)
 		case "/v1/remove_peer":
 			v1RemovePeerHandler(ctx)
+		case "/v1/info":
+			v1InfoHandler(ctx)
 		default:
 			notFoundHandler(ctx)
 		}
@@ -114,8 +134,12 @@ func notFoundHandler(ctx *fasthttp.RequestCtx) {
 }
 
 func v1InsertHandler(ctx *fasthttp.RequestCtx) {
+	start := time.Now()
+	log.Printf("Received insert request")
+
 	if !ctx.IsPost() {
 		ctx.SetStatusCode(fasthttp.StatusMethodNotAllowed)
+		ctx.SetContentType("text/plain; charset=utf-8")
 		ctx.SetBody([]byte("Method not allowed"))
 		return
 	}
@@ -126,26 +150,72 @@ func v1InsertHandler(ctx *fasthttp.RequestCtx) {
 	err := json.Unmarshal(body, &jsonBody)
 	if err != nil {
 		ctx.SetStatusCode(fasthttp.StatusBadRequest)
+		ctx.SetContentType("text/plain; charset=utf-8")
 		ctx.SetBody([]byte(err.Error()))
 		return
 	}
 
 	if jsonBody.Key == "" {
 		ctx.SetStatusCode(fasthttp.StatusBadRequest)
+		ctx.SetContentType("text/plain; charset=utf-8")
 		ctx.SetBody([]byte("Key is required"))
 		return
 	}
 
+	log.Printf("Attempting to insert key: %s", jsonBody.Key)
+
+	// Check if this node is the leader
 	if !ServerRaftNode.IsLeader() {
 		leaderAddr := ServerRaftNode.LeaderAddress()
-		ctx.SetStatusCode(fasthttp.StatusTemporaryRedirect)
-		ctx.Response.Header.Set("Location", "http://"+leaderAddr+"/v1/insert")
+		log.Printf("This node is not the leader. Leader address: %s", leaderAddr)
+		if leaderAddr == "" {
+			ctx.SetStatusCode(fasthttp.StatusServiceUnavailable)
+			ctx.SetContentType("text/plain; charset=utf-8")
+			ctx.SetBody([]byte("No leader available"))
+			return
+		}
+
+		log.Printf("Forwarding insert request to leader at %s", leaderAddr)
+
+		// Attempt to forward the request to the leader with retries
+		var respBody []byte
+		var respStatus int
+		var err error
+		for i := 0; i < maxRetries; i++ {
+			respBody, respStatus, err = forwardV1InsertRequestToLeader(leaderAddr, body)
+			if err == nil {
+				break
+			}
+			log.Printf("Attempt %d: Error forwarding request to leader: %v", i+1, err)
+			time.Sleep(retryDelay)
+		}
+
+		if err != nil {
+			ctx.SetStatusCode(fasthttp.StatusInternalServerError)
+			ctx.SetContentType("text/plain; charset=utf-8")
+			errorMsg := fmt.Sprintf("Failed to forward request to leader after %d attempts. Last error: %v", maxRetries, err)
+			if len(respBody) > 0 {
+				errorMsg += fmt.Sprintf("\nPartial response received: %s", string(respBody))
+			}
+			ctx.SetBody([]byte(errorMsg))
+			return
+		}
+
+		log.Printf("Successfully forwarded request to leader. Status: %d, Body: %s", respStatus, string(respBody))
+
+		// Return the leader's response
+		ctx.SetStatusCode(respStatus)
+		ctx.SetBody(respBody)
 		return
 	}
 
+	log.Printf("This node is the leader. Proceeding with insert operation.")
+
 	insertError := ServerRaftNode.Insert(jsonBody.Key)
 	if insertError != nil {
+		log.Printf("Error inserting key: %v", insertError)
 		ctx.SetStatusCode(fasthttp.StatusInternalServerError)
+		ctx.SetContentType("text/plain; charset=utf-8")
 		ctx.SetBody([]byte(insertError.Error()))
 		return
 	}
@@ -153,7 +223,9 @@ func v1InsertHandler(ctx *fasthttp.RequestCtx) {
 	response := V1InsertResponse{Key: jsonBody.Key, Status: "inserted"}
 	responseJSON, err := json.Marshal(response)
 	if err != nil {
+		log.Printf("Error marshaling response: %v", err)
 		ctx.SetStatusCode(fasthttp.StatusInternalServerError)
+		ctx.SetContentType("text/plain; charset=utf-8")
 		ctx.SetBody([]byte(err.Error()))
 		return
 	}
@@ -161,11 +233,17 @@ func v1InsertHandler(ctx *fasthttp.RequestCtx) {
 	ctx.SetStatusCode(fasthttp.StatusOK)
 	ctx.SetContentType("application/json")
 	ctx.SetBody(responseJSON)
+
+	log.Printf("Insert operation completed successfully. Key: %s, Elapsed time: %v", jsonBody.Key, time.Since(start))
 }
 
 func v1ExistsHandler(ctx *fasthttp.RequestCtx) {
+	start := time.Now()
+	log.Printf("Received exists request")
+
 	if !ctx.IsGet() {
 		ctx.SetStatusCode(fasthttp.StatusMethodNotAllowed)
+		ctx.SetContentType("text/plain; charset=utf-8")
 		ctx.SetBody([]byte("Method not allowed"))
 		return
 	}
@@ -173,22 +251,25 @@ func v1ExistsHandler(ctx *fasthttp.RequestCtx) {
 	key := string(ctx.QueryArgs().Peek("key"))
 	if key == "" {
 		ctx.SetStatusCode(fasthttp.StatusBadRequest)
+		ctx.SetContentType("text/plain; charset=utf-8")
 		ctx.SetBody([]byte("Key is required"))
 		return
 	}
 
-	if !ServerRaftNode.IsLeader() {
-		leaderAddr := ServerRaftNode.LeaderAddress()
-		ctx.SetStatusCode(fasthttp.StatusTemporaryRedirect)
-		ctx.Response.Header.Set("Location", "http://"+leaderAddr+"/v1/exists?key="+key)
-		return
-	}
+	log.Printf("Checking existence of key: %s", key)
 
 	exists, elapsed := QF.Exists([]byte(key))
-	response := V1ExistsResponse{Key: key, Exists: exists, Elapsed: elapsed}
+	elapsedMillis := float64(elapsed) / float64(time.Microsecond)
+	elapsedFormatted := fmt.Sprintf("%.2fµs", elapsedMillis)
+
+	log.Printf("Key %s exists: %v, Lookup time: %s", key, exists, elapsedFormatted)
+
+	response := V1ExistsResponse{Key: key, Exists: exists, Elapsed: elapsedFormatted}
 	responseJSON, err := json.Marshal(response)
 	if err != nil {
+		log.Printf("Error marshaling response: %v", err)
 		ctx.SetStatusCode(fasthttp.StatusInternalServerError)
+		ctx.SetContentType("text/plain; charset=utf-8")
 		ctx.SetBody([]byte(err.Error()))
 		return
 	}
@@ -196,11 +277,14 @@ func v1ExistsHandler(ctx *fasthttp.RequestCtx) {
 	ctx.SetStatusCode(fasthttp.StatusOK)
 	ctx.SetContentType("application/json")
 	ctx.SetBody(responseJSON)
+
+	log.Printf("Exists operation completed. Key: %s, Exists: %v, Total elapsed time: %v", key, exists, time.Since(start))
 }
 
 func v1RemoveHandler(ctx *fasthttp.RequestCtx) {
 	if !ctx.IsPost() {
 		ctx.SetStatusCode(fasthttp.StatusMethodNotAllowed)
+		ctx.SetContentType("text/plain; charset=utf-8")
 		ctx.SetBody([]byte("Method not allowed"))
 		return
 	}
@@ -211,26 +295,22 @@ func v1RemoveHandler(ctx *fasthttp.RequestCtx) {
 	err := json.Unmarshal(body, &jsonBody)
 	if err != nil {
 		ctx.SetStatusCode(fasthttp.StatusBadRequest)
+		ctx.SetContentType("text/plain; charset=utf-8")
 		ctx.SetBody([]byte(err.Error()))
 		return
 	}
 
 	if jsonBody.Key == "" {
 		ctx.SetStatusCode(fasthttp.StatusBadRequest)
+		ctx.SetContentType("text/plain; charset=utf-8")
 		ctx.SetBody([]byte("Key is required"))
-		return
-	}
-
-	if !ServerRaftNode.IsLeader() {
-		leaderAddr := ServerRaftNode.LeaderAddress()
-		ctx.SetStatusCode(fasthttp.StatusTemporaryRedirect)
-		ctx.Response.Header.Set("Location", "http://"+leaderAddr+"/v1/remove")
 		return
 	}
 
 	removeError := ServerRaftNode.Remove(jsonBody.Key)
 	if removeError != nil {
 		ctx.SetStatusCode(fasthttp.StatusInternalServerError)
+		ctx.SetContentType("text/plain; charset=utf-8")
 		ctx.SetBody([]byte(removeError.Error()))
 		return
 	}
@@ -251,14 +331,8 @@ func v1RemoveHandler(ctx *fasthttp.RequestCtx) {
 func v1CountHandler(ctx *fasthttp.RequestCtx) {
 	if !ctx.IsGet() {
 		ctx.SetStatusCode(fasthttp.StatusMethodNotAllowed)
+		ctx.SetContentType("text/plain; charset=utf-8")
 		ctx.SetBody([]byte("Method not allowed"))
-		return
-	}
-
-	if !ServerRaftNode.IsLeader() {
-		leaderAddr := ServerRaftNode.LeaderAddress()
-		ctx.SetStatusCode(fasthttp.StatusTemporaryRedirect)
-		ctx.Response.Header.Set("Location", "http://"+leaderAddr+"/v1/count")
 		return
 	}
 
@@ -267,6 +341,7 @@ func v1CountHandler(ctx *fasthttp.RequestCtx) {
 	responseJSON, err := json.Marshal(response)
 	if err != nil {
 		ctx.SetStatusCode(fasthttp.StatusInternalServerError)
+		ctx.SetContentType("text/plain; charset=utf-8")
 		ctx.SetBody([]byte(err.Error()))
 		return
 	}
@@ -279,6 +354,7 @@ func v1CountHandler(ctx *fasthttp.RequestCtx) {
 func v1AddPeerHandler(ctx *fasthttp.RequestCtx) {
 	if !ctx.IsPost() {
 		ctx.SetStatusCode(fasthttp.StatusMethodNotAllowed)
+		ctx.SetContentType("text/plain; charset=utf-8")
 		ctx.SetBody([]byte("Method not allowed"))
 		return
 	}
@@ -290,12 +366,14 @@ func v1AddPeerHandler(ctx *fasthttp.RequestCtx) {
 
 	if err := json.Unmarshal(ctx.PostBody(), &params); err != nil {
 		ctx.SetStatusCode(fasthttp.StatusBadRequest)
+		ctx.SetContentType("text/plain; charset=utf-8")
 		ctx.SetBody([]byte("Invalid JSON"))
 		return
 	}
 
 	if err := ServerRaftNode.AddPeer(params.NodeID, params.Addr); err != nil {
 		ctx.SetStatusCode(fasthttp.StatusInternalServerError)
+		ctx.SetContentType("text/plain; charset=utf-8")
 		ctx.SetBody([]byte(err.Error()))
 		return
 	}
@@ -307,6 +385,7 @@ func v1AddPeerHandler(ctx *fasthttp.RequestCtx) {
 func v1RemovePeerHandler(ctx *fasthttp.RequestCtx) {
 	if !ctx.IsPost() {
 		ctx.SetStatusCode(fasthttp.StatusMethodNotAllowed)
+		ctx.SetContentType("text/plain; charset=utf-8")
 		ctx.SetBody([]byte("Method not allowed"))
 		return
 	}
@@ -317,16 +396,87 @@ func v1RemovePeerHandler(ctx *fasthttp.RequestCtx) {
 
 	if err := json.Unmarshal(ctx.PostBody(), &params); err != nil {
 		ctx.SetStatusCode(fasthttp.StatusBadRequest)
+		ctx.SetContentType("text/plain; charset=utf-8")
 		ctx.SetBody([]byte("Invalid JSON"))
 		return
 	}
 
 	if err := ServerRaftNode.RemovePeer(params.NodeID); err != nil {
 		ctx.SetStatusCode(fasthttp.StatusInternalServerError)
+		ctx.SetContentType("text/plain; charset=utf-8")
 		ctx.SetBody([]byte(err.Error()))
 		return
 	}
 
 	ctx.SetStatusCode(fasthttp.StatusOK)
 	ctx.SetBody([]byte("Peer removed successfully"))
+}
+
+func v1InfoHandler(ctx *fasthttp.RequestCtx) {
+	if !ctx.IsGet() {
+		ctx.SetStatusCode(fasthttp.StatusMethodNotAllowed)
+		ctx.SetContentType("text/plain; charset=utf-8")
+		ctx.SetBody([]byte("Method not allowed"))
+		return
+	}
+
+	isLeader := ServerRaftNode.IsLeader()
+	qfSize := 2 ^ Configuration.Quotient.LogSize
+
+	response := V1InfoResponse{
+		IsLeader: isLeader,
+		QFSize:   int(qfSize),
+		NodeID:   Configuration.Raft.NodeID,
+	}
+
+	jsonResponse, err := json.Marshal(response)
+	if err != nil {
+		log.Printf("Error marshaling response: %v", err)
+		ctx.SetStatusCode(fasthttp.StatusInternalServerError)
+		return
+	}
+
+	ctx.SetStatusCode(fasthttp.StatusOK)
+	ctx.SetContentType("application/json")
+	ctx.SetBody(jsonResponse)
+
+}
+
+func healthHandler(ctx *fasthttp.RequestCtx) {
+	ctx.SetStatusCode(fasthttp.StatusOK)
+	ctx.SetContentType("text/plain; charset=utf-8")
+	ctx.SetBodyString("OK")
+}
+
+func forwardV1InsertRequestToLeader(leaderAddr string, body []byte) ([]byte, int, error) {
+	client := &http.Client{
+		Timeout: requestTimeout,
+	}
+
+	leaderURL := fmt.Sprintf("http://%s/v1/insert", leaderAddr)
+	log.Printf("Forwarding to: %s", leaderURL)
+
+	req, err := http.NewRequest("POST", leaderURL, bytes.NewBuffer(body))
+	if err != nil {
+		return nil, 0, fmt.Errorf("error creating request: %v", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, 0, fmt.Errorf("error sending request to leader: %v", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return nil, 0, fmt.Errorf("error reading response body: %v", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return respBody, resp.StatusCode, fmt.Errorf("non-OK HTTP status: %v", resp.StatusCode)
+	}
+
+	return respBody, resp.StatusCode, nil
 }
